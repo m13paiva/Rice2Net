@@ -1,0 +1,48 @@
+<style>
+    #homepage-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background-color: #1a1a1a;
+        color: #eee;
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        font-family: Segoe UI, sans-serif;
+        overflow-y: auto;
+    }
+    .homepage-content {
+        max-width: 800px;
+        padding: 40px;
+        background: rgba(0, 0, 0, 0.5);
+        border: 1px solid #333;
+        border-radius: 8px;
+        text-align: center;
+        margin: 40px 0;
+    }
+    .homepage-content h1 { margin-top: 0; font-size: 2.5rem; color: #4db8ff; }
+    .homepage-content h2 { font-size: 1.5rem; margin-top: 30px; border-bottom: 1px solid #444; padding-bottom: 5px; text-align: left;}
+    .homepage-content p { font-size: 1rem; line-height: 1.6; text-align: left; }
+</style>
+
+<div id="homepage-overlay">
+    <div class="homepage-content">
+        <h1>Rice2Net</h1>
+        <p>Rice2Net is a webtool for the visualization and analysis of the rice gene regulatory network. It provides interfaces for network exploration, data filtering, and layout export. The application retrieves graph data and metadata from a Neo4j database to render regulatory interactions and coexpression links.</p>
+        
+        <h2>Usage</h2>
+        <p>Use the control panel to import gene targets, filter subnetworks, adjust physical layout parameters, and export visualizations. Nodes representing genes can be selected to retrieve annotation data, including Gene Ontology terms, MapMan bins, and KEGG pathway assignments.</p>
+        
+        <h2>Team</h2>
+        <p>[Insert investigator and developer names here]</p>
+        
+        <h2>Funding</h2>
+        <p>[Insert grant identifiers and institutional support here]</p>
+        
+        <button class="btn btn-action" style="font-size: 1.2rem; padding: 12px 24px; margin-top: 30px; cursor: pointer;" onclick="enterApp()">Try Rice2Net</button>
+    </div>
+</div>
