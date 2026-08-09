@@ -1,4 +1,6 @@
-'''# Rice2Net
+<div align="justify">
+
+# Rice2Net
 
 ## About Rice2Net
 
@@ -17,9 +19,9 @@ The **Target Explorer** allows users to isolate subnetworks based on a list of g
 * **Prune Dead Ends:** A toggle that removes "leaf" nodes (nodes with a degree of 1) from the filtered subnetwork, retaining the interconnected graph.
 * **Connect Neighbors:** This toggle dictates graph traversal logic during subnetwork filtering. When enabled, the filter identifies and draws edges between nodes in the target subset and their retrieved neighbors. When disabled, the filter draws edges radiating from the initial target nodes, resulting in a radial topology. This logic applies to graph manipulation: when enabled during node expansion, the system draws edges between introduced nodes and existing nodes on the canvas. When disabled, introduced nodes connect exclusively to the expanded parent node.
 * **Graph Manipulation:** While in "Select" mode, right-clicking a node reveals manipulation options:
-* **Expand:** Fetches and renders database neighbors of a leaf node.
-* **Contract:** Removes leaf nodes attached to the selected node.
-* **Pop:** Deletes the selected node from the visualization.
+  * **Expand:** Fetches and renders database neighbors of a leaf node.
+  * **Contract:** Removes leaf nodes attached to the selected node.
+  * **Pop:** Deletes the selected node from the visualization.
 
 </details>
 
@@ -74,7 +76,9 @@ Rice2Net aggregates annotations and sequence identifiers from databases to provi
 
 The dataset comprises 1402 samples from photosynthetic tissues. Treatments include abiotic stress, physiological conditions, chemical applications, biotic stress, and genetic modifications. Genetic modifications involve mutations influencing chloroplast development.
 
-<img src="figures/dataset_comp.png" alt="Overview of the transcriptomic dataset composition across 1402 curated samples." width="100%">
+<p align="center">
+  <img src="figures/dataset_comp.png" alt="Overview of the transcriptomic dataset composition across 1402 curated samples." width="100%">
+</p>
 
 The reference transcriptome and proteome for Oryza sativa subsp. japonica (genome assembly IRGSP-1.0) were used. Data was sourced from the following NCBI SRA BioProjects: PRJNA1219119, PRJNA609211, PRJNA1255502, PRJNA575016, PRJNA1073311, PRJNA753062, PRJNA890021, PRJNA917024, PRJNA1020267, PRJNA1293730, PRJNA933387, PRJNA350792, PRJNA1174730, PRJNA1198503, PRJNA1068025, PRJNA358135, PRJNA716196, PRJNA532802, PRJNA603205, PRJNA1120955, PRJNA1229755, PRJNA1148223, PRJNA1067293, PRJNA1234113, PRJNA1234517, PRJNA730675, PRJEB64872, PRJNA1036792, PRJNA1121593, PRJNA751936, PRJNA1011474, PRJNA802358, PRJNA894465, PRJNA1019094, PRJNA741871, PRJNA430015, PRJNA601442, PRJNA450806, PRJNA811347, PRJNA1141930, PRJNA1260801, PRJNA1067651, PRJNA790476, PRJNA767196, PRJNA386172, PRJNA609653, PRJNA631179, PRJNA1010774, PRJNA408068, and PRJNA560146.
 
@@ -144,7 +148,9 @@ The application retrieves graph data using asynchronous HTTP requests directed a
 
 The data is stored in a Neo4j graph database. As illustrated in `db_structure.png`, the schema relies on a central `Gene` node. Peripheral nodes store annotation metadata and connect to the core `Gene` nodes via specific directional relationships. Regulatory and coexpression networks are formed by self-referential relationships between `Gene` nodes.
 
-<img src="figures/db_structure.png" alt="Node and edge structure of the Neo4j Database." width="100%">
+<p align="center">
+  <img src="figures/db_structure.png" alt="Node and edge structure of the Neo4j Database." width="100%">
+</p>
 
 **Node Statistics**
 
@@ -178,4 +184,24 @@ The data is stored in a Neo4j graph database. As illustrated in `db_structure.pn
 | `Gene` | `HAS_MOTIF` | `Motif` | 984 |
 
 </details>
-'''
+
+## Team
+
+* **Manuel Almeida** (Lead Developer): manuel.p.almeida13@gmail.com
+* **Henrique Niza, Ph.D.** (Backend & Security Developer): henrique.niza@itqb.unl.pt
+* **Pedro Barros, Ph.D.** (Thesis Supervisor): pbarros@itqb.unl.pt
+* **Tiago Lourenço, Ph.D.** (Thesis Co-Supervisor): tsantos@itqb.unl.pt
+* **M. Margarida Oliveira, Ph.D.** (Lab Director): mmolive@itqb.unl.pt
+
+## Acknowledgements & Funding
+
+### Acknowledgements
+We acknowledge the GPlantS lab at ITQB for their support throughout this project, and the Master in Computational Biology and Bioinformatics program from NOVA FCT.
+
+### Funding
+This work was supported by FCT - Fundação para a Ciência e a Tecnologia, I.P., through:
+* Rice2B project (2022.02916.PTDC, DOI: 10.54499/2022.02916.PTDC)
+* Green-it Bioresources for Sustainability R&D Unit (UID/04551/2025, DOI: 10.54499/UID/04551/2025; UID/PRR/04551/2025, DOI: 10.54499/UID/PRR/04551/2025)
+* LS4FUTURE Associated Laboratory (LA/P/0087/2020, DOI: 10.54499/LA/P/0087/2020)
+
+</div>'
