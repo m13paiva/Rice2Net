@@ -2,8 +2,8 @@
 
 # --- CONFIGURATION ---
 # Replace these with the actual absolute paths to your directories.
-FRONTEND_DIR="/home/m13paiva/Desktop/network_rendering"
-BACKEND_DIR="/home/m13paiva/Desktop/network_rendering/server"
+FRONTEND_DIR="/home/m13paiva/Desktop/Rice2Net"
+BACKEND_DIR="/home/m13paiva/Desktop/Rice2Net/server"
 
 echo "Cleaning up any old server instances..."
 pkill -f "node server.js"
