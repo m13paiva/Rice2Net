@@ -204,4 +204,4 @@ This work was supported by FCT - Fundação para a Ciência e a Tecnologia, I.P.
 * Green-it Bioresources for Sustainability R&D Unit (UID/04551/2025, DOI: 10.54499/UID/04551/2025; UID/PRR/04551/2025, DOI: 10.54499/UID/PRR/04551/2025)
 * LS4FUTURE Associated Laboratory (LA/P/0087/2020, DOI: 10.54499/LA/P/0087/2020)
 
-</div>'
+</div>
