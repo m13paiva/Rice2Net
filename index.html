@@ -9,13 +9,12 @@
             function enterApp() {
                 const overlay = document.getElementById('homepage-overlay');
                 if (overlay) overlay.style.display = 'none';
-                sessionStorage.setItem('skipHomepage', 'true');
             }
 
             function showHomepage() {
                 const overlay = document.getElementById('homepage-overlay');
                 if (overlay) {
-                    overlay.style.display = 'flex';
+                    overlay.style.display = 'block';
                 } else {
                     fetch('homepage.html')
                         .then(response => {
@@ -23,16 +22,36 @@
                             return response.text();
                         })
                         .then(html => {
-                            document.body.insertAdjacentHTML('beforeend', html);
+                            const overlayDiv = document.createElement('div');
+                            overlayDiv.id = 'homepage-overlay';
+                            overlayDiv.style.position = 'absolute';
+                            overlayDiv.style.top = '0';
+                            overlayDiv.style.left = '0';
+                            overlayDiv.style.width = '100%';
+                            overlayDiv.style.height = '100%';
+                            overlayDiv.style.zIndex = '9999';
+                            overlayDiv.style.backgroundColor = '#ffffff';
+                            overlayDiv.style.overflowY = 'auto';
+                            overlayDiv.style.display = 'block';
+                            overlayDiv.innerHTML = html;
+
+                            // Hijacking the button from your injected HTML so it actually works
+                            const goBtn = overlayDiv.querySelector('.main-title-btn');
+                            if (goBtn) {
+                                goBtn.onclick = function(e) {
+                                    e.preventDefault();
+                                    enterApp();
+                                };
+                            }
+
+                            document.body.appendChild(overlayDiv);
                         })
                         .catch(err => console.error(err));
                 }
             }
 
             document.addEventListener("DOMContentLoaded", () => {
-                if (sessionStorage.getItem('skipHomepage') !== 'true') {
-                    showHomepage();
-                }
+                showHomepage();
             });
         </script>
     </head>
@@ -437,15 +456,11 @@
         <script src="app/sim.js" defer></script>
         <script src="app/filter.js" defer></script>
         <script src="app/kegg.js" defer></script>
-
-        <!-- The newly decoupled UI modules -->
         <script src="app/controls.js" defer></script>
         <script src="app/legends.js" defer></script>
         <script src="app/graph.js" defer></script>
         <script src="app/interactions.js" defer></script>
         <script src="app/exporters.js" defer></script>
-
-        <!-- ui.js contains __APP_CORE__.main(), it must be last -->
         <script src="app/ui.js" defer></script>
     </body>
 </html>
