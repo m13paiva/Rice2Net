@@ -1,0 +1,198 @@
+/* Scoped to .homepage-wrapper to protect your precious index */
+body {
+    margin: 0;
+    padding: 0;
+}
+
+.homepage-wrapper {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background-color: #ffffff;
+    color: #333333;
+    width: 100%;
+}
+
+/* The hero section container */
+.homepage-wrapper .hero-section {
+    position: relative;
+    width: 100%;
+    min-height: 400px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    background-color: #f8f9fa; /* Added a light background just in case */
+}
+
+/* Targeting the background network image explicitly by its class */
+.homepage-wrapper .hero-bg-image {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100%; /* Spans the full width of the hero */
+    height: auto;
+    min-height: 100%;
+    object-fit: cover;
+    z-index: 1;
+    opacity: 0.15; /* Heavily faded so it doesn't ruin the foreground */
+}
+
+/* The new wrapper you added, acting as a flex container */
+.homepage-wrapper .hero-content-wrapper {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: row; /* Forcing them side-by-side */
+    justify-content: center;
+    align-items: center;
+    gap: 40px; /* A clean, static gap between the logo and button */
+}
+
+/* Targeting your logo explicitly so it doesn't take over the screen */
+.homepage-wrapper .hero-logo {
+    height: 120px;
+    width: auto;
+    filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1));
+}
+
+/* The button styling */
+.homepage-wrapper .main-title-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    color: #ffffff;
+    text-decoration: none;
+    padding: 15px 50px;
+    border-radius: 50px;
+    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.2);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.3s ease 0s;
+}
+
+.homepage-wrapper .main-title-btn:hover {
+    background: linear-gradient(135deg, #2a5298 0%, #1e3c72 100%);
+    box-shadow: 0 15px 25px rgba(0, 0, 0, 0.4);
+    transform: translateY(-3px);
+}
+
+.homepage-wrapper .main-title-btn .subtitle {
+    font-size: 1.2rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin: 0;
+}
+
+/* README Content Styles */
+.homepage-wrapper .readme-content {
+    padding: 50px 8vw;
+    box-sizing: border-box;
+    width: 100%;
+    line-height: 1.6;
+    text-align: justify;
+    font-size: 1.15rem;
+}
+
+.homepage-wrapper .repo-link {
+    font-size: 1.1rem;
+    color: #2c3e50;
+    margin-bottom: 40px;
+    display: inline-block;
+    font-weight: bold;
+}
+
+.homepage-wrapper .readme-content details {
+    background-color: #f8f9fa;
+    border: 1px solid #e1e4e8;
+    border-radius: 6px;
+    margin-bottom: 15px;
+    padding: 15px 20px;
+}
+
+.homepage-wrapper .readme-content summary {
+    font-size: 1.3rem;
+    font-weight: 600;
+    cursor: pointer;
+    outline: none;
+    list-style: none;
+    color: #2c3e50;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    text-align: left !important;
+}
+
+.homepage-wrapper .readme-content summary::-webkit-details-marker {
+    display: none;
+}
+
+.homepage-wrapper .readme-content summary::before {
+    content: '▶';
+    display: inline-block;
+    margin-right: 12px;
+    transition: transform 0.2s ease;
+    font-size: 1rem;
+    color: #2c3e50;
+}
+
+.homepage-wrapper .readme-content summary::after {
+    content: none !important;
+    display: none !important;
+}
+
+.homepage-wrapper .readme-content details[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.homepage-wrapper .readme-content details[open] summary {
+    margin-bottom: 15px;
+    border-bottom: 1px solid #e1e4e8;
+    padding-bottom: 10px;
+}
+
+.homepage-wrapper .readme-content h2,
+.homepage-wrapper .readme-content h3 {
+    color: #2c3e50;
+    margin-top: 30px;
+    border-bottom: 1px solid #eeeeee;
+    padding-bottom: 5px;
+    text-align: left;
+}
+
+.homepage-wrapper .readme-content p {
+    color: #444444;
+    margin-bottom: 15px;
+}
+
+.homepage-wrapper .readme-content ul,
+.homepage-wrapper .readme-content ol {
+    color: #444444;
+    padding-left: 20px;
+    margin-bottom: 15px;
+}
+
+.homepage-wrapper .readme-content li {
+    margin-bottom: 8px;
+}
+
+/* Footer Styles */
+.homepage-wrapper footer {
+    min-height: 120px;
+    background-color: #f8f9fa;
+    width: 100%;
+    border-top: 1px solid #e1e4e8;
+    margin-top: 40px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 80px;
+    padding: 30px;
+    box-sizing: border-box;
+}
+
+.homepage-wrapper footer img:nth-child(1) { height: 50px; width: auto; }
+.homepage-wrapper footer img:nth-child(2) { height: 70px; width: auto; }
+.homepage-wrapper footer img:nth-child(3) { height: 80px; width: auto; }
+.homepage-wrapper footer img:nth-child(4) { height: 80px; width: auto; }
