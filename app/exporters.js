@@ -28,6 +28,7 @@ function getVisibleExportNodeMap() {
 function getVisibleExportLinks() {
   const visibleNodeMap = getVisibleExportNodeMap();
   return links.filter((l) => {
+    if (window.isEdgeVisible && !window.isEdgeVisible(l)) return false;
     const sourceId = l.source?.id || l.source;
     const targetId = l.target?.id || l.target;
     return visibleNodeMap.has(sourceId) && visibleNodeMap.has(targetId);
@@ -83,10 +84,15 @@ function initExportControls() {
 
 window.exportTSV = function () {
   try {
+    if (typeof window.reapplyColors === "function") window.reapplyColors();
+
+    const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
     const rows = ["Source\tTarget\tWeight\tIRP_score\tDirectional"];
     let exportedCount = 0;
 
     links.forEach((l) => {
+      if (window.isEdgeVisible && !window.isEdgeVisible(l)) return;
+
       const sId = l.source?.id || l.source;
       const tId = l.target?.id || l.target;
       const sNode = typeof l.source === "object" ? l.source : nodes.find((n) => n.id === sId);
@@ -99,7 +105,7 @@ window.exportTSV = function () {
       const weight = l.weight !== undefined ? l.weight : l.value || l.w || "1";
       const irpVal = l.irp !== undefined && l.irp !== null ? l.irp : "";
 
-      const isDirectional = !!l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0;
+      const isDirectional = isRegActive && !!l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0;
 
       if (isDirectional) {
         l.directions.forEach((dir) => {
@@ -144,6 +150,9 @@ window.exportTSV = function () {
 
 window.exportJSON = function () {
   try {
+    if (typeof window.reapplyColors === "function") window.reapplyColors();
+
+    const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
     const exportNodes = [];
     const visibleNodeMap = new Set();
 
@@ -165,6 +174,8 @@ window.exportJSON = function () {
 
     const exportLinks = [];
     links.forEach((l) => {
+      if (window.isEdgeVisible && !window.isEdgeVisible(l)) return;
+
       const sId = l.source?.id || l.source;
       const tId = l.target?.id || l.target;
 
@@ -178,7 +189,7 @@ window.exportJSON = function () {
           weight: l.weight !== undefined ? l.weight : l.value || 1,
           irp: l.irp || 0,
           has_interacts: l.has_interacts,
-          has_regulates: l.has_regulates,
+          has_regulates: isRegActive ? !!l.has_regulates : false,
           matched_sequence: l.matched_sequence,
           p_value: l.p_value,
           q_value: l.q_value,
@@ -203,6 +214,8 @@ window.exportJSON = function () {
 
 window.exportGenesTSV = async function () {
   try {
+    if (typeof window.reapplyColors === "function") window.reapplyColors();
+
     const exportNodes = nodes.filter((n) => {
       if ((n.isRogue && !VISIBILITY_STATE.Rogue) || n.color === CONFIG.visuals.colors.Transparent) return false;
       return true;
