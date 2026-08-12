@@ -1,4 +1,17 @@
-// exporters.js
+/**
+ * exporters.js - Network Data Export Module
+ * 
+ * Provides network topology export options (TSV edge lists, JSON network layout files,
+ * annotated TSV gene lists, and high-resolution PNG canvas renderings).
+ * All exports synchronize node degree, rogue status, and link visibility.
+ */
+
+/**
+ * Checks whether a given node should be visible in exported data.
+ * @param {Object} node - Node object.
+ * @param {Set<string>|null} targetSet - Optional target ID set.
+ * @returns {boolean} True if visible for export.
+ */
 function isNodeVisibleForExport(node, targetSet = null) {
   if (!node) return false;
   if (node.isRogue && !VISIBILITY_STATE.Rogue) return false;
@@ -16,15 +29,27 @@ function isNodeVisibleForExport(node, targetSet = null) {
   return false;
 }
 
+/**
+ * Returns an array of all currently visible nodes eligible for export.
+ * @returns {Array<Object>} Visible nodes.
+ */
 function getVisibleExportNodes() {
   const targetSet = typeof getExportTargetSet === 'function' ? getExportTargetSet() : new Set();
   return nodes.filter((n) => isNodeVisibleForExport(n, targetSet));
 }
 
+/**
+ * Returns a map of visible nodes keyed by node ID.
+ * @returns {Map<string, Object>} Map of visible nodes.
+ */
 function getVisibleExportNodeMap() {
   return new Map(getVisibleExportNodes().map((n) => [n.id, n]));
 }
 
+/**
+ * Returns an array of visible edge links for export.
+ * @returns {Array<Object>} Array of visible link objects.
+ */
 function getVisibleExportLinks() {
   const visibleNodeMap = getVisibleExportNodeMap();
   return links.filter((l) => {
@@ -35,6 +60,11 @@ function getVisibleExportLinks() {
   });
 }
 
+/**
+ * Helper function to determine edge export endpoints based on node type priority.
+ * @param {Object} link - Edge link object.
+ * @returns {Array<Object>} Pair of endpoint nodes [target, source].
+ */
 function getEdgeExportEndpoints(link) {
   const sourceNode = link.source;
   const targetNode = link.target;
@@ -49,6 +79,12 @@ function getEdgeExportEndpoints(link) {
   return priority(targetNode) > priority(sourceNode) ? [targetNode, sourceNode] : [sourceNode, targetNode];
 }
 
+/**
+ * Downloads generated content as a file via a dynamically created anchor element.
+ * @param {string} content - File payload string.
+ * @param {string} filename - Output filename.
+ * @param {string} mimeType - MIME content type.
+ */
 function downloadFile(content, filename, mimeType) {
   const a = document.createElement("a");
   const blob = new Blob([content], { type: mimeType });
@@ -57,6 +93,9 @@ function downloadFile(content, filename, mimeType) {
   a.click();
 }
 
+/**
+ * Initializes export configuration panel controls and ID mode toggles.
+ */
 function initExportControls() {
   const tfOnlyRow = document.getElementById("export-tfs-only-row");
   if (tfOnlyRow) tfOnlyRow.remove();
@@ -82,6 +121,9 @@ function initExportControls() {
   checkbox.dataset.bound = "1";
 }
 
+/**
+ * Exports visible network edges to a Tab-Separated Values (TSV) file.
+ */
 window.exportTSV = function () {
   try {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
@@ -143,11 +185,14 @@ window.exportTSV = function () {
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) {
-    console.log("Failed to export TSV:", e);
-    alert("TSV Export failed. See console for your mess.");
+    console.error("Failed to export TSV:", e);
+    alert("TSV Export failed. Please check the browser console for details.");
   }
 };
 
+/**
+ * Exports visible nodes and links to a JSON layout structure file.
+ */
 window.exportJSON = function () {
   try {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
@@ -207,11 +252,14 @@ window.exportJSON = function () {
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) {
-    console.log("Failed to export JSON:", e);
-    alert("JSON Export failed due to circular references or data corruption.");
+    console.error("Failed to export JSON:", e);
+    alert("JSON Export failed. Please check the browser console for details.");
   }
 };
 
+/**
+ * Fetches full database metadata for visible genes and exports a TSV table file.
+ */
 window.exportGenesTSV = async function () {
   try {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
@@ -335,11 +383,14 @@ window.exportGenesTSV = async function () {
     URL.revokeObjectURL(url);
   } catch (e) {
     if (document.getElementById("loader")) document.getElementById("loader").style.display = "none";
-    console.log("Failed to export Genes TSV:", e);
-    alert("Genes Export failed. See console for your mess.");
+    console.error("Failed to export Genes TSV:", e);
+    alert("Genes Export failed. Please check the browser console for details.");
   }
 };
 
+/**
+ * Generates a high-resolution PNG image export of the current canvas view and legend overlay.
+ */
 window.exportPNG = function () {
   const loader = document.getElementById("loader");
   const loaderText = document.getElementById("loader-text");
@@ -481,7 +532,7 @@ window.exportPNG = function () {
       exportCtx.save();
       exportCtx.scale(scale, scale);
 
-      // --- GRAPH ---
+      // --- GRAPH RENDERING ---
       exportCtx.save();
       const graphOffsetY = (finalH - graphPixelH) / 2;
       const graphOffsetX = marginPx;
@@ -558,7 +609,7 @@ window.exportPNG = function () {
       exportCtx.setLineDash([]);
       exportCtx.restore();
 
-      // --- LEGEND ---
+      // --- LEGEND RENDERING ---
       if (hasLegend) {
         const lx = targetW;
         const ly = (finalH - lh) / 2;
@@ -609,8 +660,8 @@ window.exportPNG = function () {
       a.download = "network_view_highres.png";
       a.click();
     } catch (err) {
-      console.log("Failed to generate high-res PNG:", err);
-      alert("Browser memory limit exceeded. Your canvas is too massive for a 6x scale.");
+      console.error("Failed to generate high-res PNG:", err);
+      alert("Browser memory limit exceeded for canvas export.");
     } finally {
       if (loader) loader.style.display = "none";
       if (typeof window.draw === "function") requestAnimationFrame(window.draw);

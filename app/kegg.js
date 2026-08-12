@@ -1,8 +1,17 @@
-// kegg.js
-// KEGG-specific rendering + preview UI.
+/**
+ * kegg.js - KEGG Pathway Link & Preview Module
+ * 
+ * Provides functions for constructing KEGG pathway URL links, rendering pathway details tables
+ * within the node modal, and displaying inline KEGG map iframe previews.
+ */
 
 window.KEGG = window.KEGG || {};
 
+/**
+ * Escapes HTML characters in a string.
+ * @param {string} s - Input string.
+ * @returns {string} Escaped string.
+ */
 function escHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -10,6 +19,11 @@ function escHtml(s) {
     .replace(/>/g, "&gt;");
 }
 
+/**
+ * Escapes characters for safe inclusion in single-quoted JavaScript string literals.
+ * @param {string} s - Input string.
+ * @returns {string} Escaped string.
+ */
 function escJsSingleQuoted(s) {
   return String(s ?? "")
     .replace(/\\/g, "\\\\")
@@ -17,12 +31,16 @@ function escJsSingleQuoted(s) {
     .replace(/\r?\n/g, " ");
 }
 
+/**
+ * Constructs a KEGG pathway URL with highlighted gene selection parameters.
+ * @param {string} code - KEGG pathway code.
+ * @param {string} geneId - Target gene identifier.
+ * @returns {string} Formatted KEGG URL.
+ */
 window.KEGG.makeLinkUrl = function (code, geneId) {
-  // Strip "path:" prefix because encodeURIComponent will break the colon
   const cleanCode = String(code ?? "").replace(/^path:/i, "");
   const c = encodeURIComponent(cleanCode);
 
-  // Strip "dosa:" prefix if your messy database already includes it to prevent dosa:dosa:
   const cleanGene = String(geneId ?? "").replace(/^dosa:/i, "");
   const r = encodeURIComponent(cleanGene);
 
@@ -31,11 +49,15 @@ window.KEGG.makeLinkUrl = function (code, geneId) {
   return `https://www.kegg.jp/entry/${c}`;
 };
 
+/**
+ * Renders the KEGG Pathways section for a node detail panel.
+ * @param {Object} node - Target node object.
+ * @returns {string} HTML string.
+ */
 window.KEGG.renderSection = function (node) {
   const kegg = Array.isArray(node?.keggDetail) ? node.keggDetail : [];
   if (!kegg.length) return "";
 
-  // Use the exact kegg_gene property you hid from me, fallback to id, fallback to legacy RAP_ID
   let targetId = "";
   if (node?.kegg_gene && String(node.kegg_gene).trim() !== "") {
     targetId = String(node.kegg_gene).trim();
@@ -100,6 +122,11 @@ window.KEGG.renderSection = function (node) {
   `;
 };
 
+/**
+ * Replaces node detail panel content with an embedded KEGG pathway iframe preview.
+ * @param {string} code - KEGG pathway code.
+ * @param {string} geneId - Target gene identifier.
+ */
 window.toggleKeggPreview = function (code, geneId) {
   const detailContent = document.getElementById("detail-content");
   const url = window.KEGG.makeLinkUrl(code, geneId);
@@ -127,6 +154,9 @@ window.toggleKeggPreview = function (code, geneId) {
   `;
 };
 
+/**
+ * Restores node details panel after closing KEGG preview.
+ */
 window.restoreDetails = function () {
   if (SELECTED_NODE && typeof window.showNodeDetails === "function") {
     window.showNodeDetails(SELECTED_NODE);

@@ -1,6 +1,14 @@
-// ui.js
+/**
+ * ui.js - User Interface & Active Stats Synchronization Module
+ * 
+ * Manages active node/edge counter displays and target gene match statistics.
+ */
+
 window.__APP_CORE__ = window.__APP_CORE__ || {};
 
+/**
+ * Updates the visible node and link count displays in the sidebar UI.
+ */
 window.updateActiveCounts = function () {
   let vNodes = 0;
   let vEdges = 0;
@@ -27,6 +35,11 @@ window.updateActiveCounts = function () {
   if (eEl) eEl.innerText = vEdges.toLocaleString();
 };
 
+/**
+ * Renders target gene match statistics in the sidebar UI.
+ * @param {number} found - Number of target genes matched in active view.
+ * @param {number} total - Total target genes specified.
+ */
 function updateTargetStats(found, total) {
   const statsContainer = document.getElementById("stats");
   if (!statsContainer) return;
@@ -49,6 +62,9 @@ function updateTargetStats(found, total) {
   }
 }
 
+/**
+ * Evaluates active target gene inputs and updates sidebar match counts.
+ */
 window.updateTargetCounts = function () {
   const text = document.getElementById("target-input").value;
   if (!text.trim()) {

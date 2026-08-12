@@ -1,12 +1,17 @@
-// filter.js
-// Filter-domain: runFilter + prune leaves + resetToFull.
-// Updates RAW_DATA.workingNodes AND RAW_DATA.workingLinks.
-
-const print = console.log;
+/**
+ * filter.js - Subnetwork Extraction & Filtering Domain Module
+ * 
+ * Implements target gene subnetwork extraction, neighborhood expansion by search depth,
+ * leaf pruning algorithms, single-node contraction/expansion/pop operations, and network restoration.
+ */
 
 window.__APP_CORE__ = window.__APP_CORE__ || {};
 
-// Helper to map raw input to internal Node IDs using the detached meta cache
+/**
+ * Resolves user target strings (gene symbols, RAP IDs, MSU IDs) to internal node IDs using cached metadata.
+ * @param {Array<string>} rawTargets - Array of raw input target identifiers.
+ * @returns {Set<string>} Set of resolved internal node IDs.
+ */
 window.resolveTargetIds = function (rawTargets) {
   const resolved = new Set();
   const rawSet = new Set(
@@ -42,6 +47,10 @@ window.resolveTargetIds = function (rawTargets) {
   return resolved;
 };
 
+/**
+ * Copies cached metadata properties onto a target node object.
+ * @param {Object} n - Target node object.
+ */
 function applyMetaToNode(n) {
   const m = RAW_DATA.metaById && RAW_DATA.metaById.get(n.id);
   if (m) {
@@ -58,6 +67,10 @@ function applyMetaToNode(n) {
   }
 }
 
+/**
+ * Applies visual styling specifications onto a target node object.
+ * @param {Object} n - Target node object.
+ */
 function applyTypeStyling(n) {
   if (window.applyNodeTypeStyling) {
     window.applyNodeTypeStyling(n);
@@ -75,6 +88,10 @@ function applyTypeStyling(n) {
   }
 }
 
+/**
+ * Removes a single node from the active subnetwork view.
+ * @param {string} nodeId - Target node ID to remove.
+ */
 window.popNode = function(nodeId) {
     if (window.IS_IMPORTED_NETWORK) return;
 
@@ -107,6 +124,10 @@ window.popNode = function(nodeId) {
     }
 };
 
+/**
+ * Contracts leaf connections attached to a target node.
+ * @param {string} nodeId - Target node ID to contract.
+ */
 window.contractNode = function(nodeId) {
     if (window.IS_IMPORTED_NETWORK) return;
 
@@ -162,6 +183,10 @@ window.contractNode = function(nodeId) {
     }
 };
 
+/**
+ * Expands a target node by adding back its missing 1st-degree neighbors from the master topology.
+ * @param {string} nodeId - Target node ID to expand.
+ */
 window.expandNode = function(nodeId) {
     if (window.IS_IMPORTED_NETWORK) return;
 
@@ -256,6 +281,9 @@ window.expandNode = function(nodeId) {
     }
 };
 
+/**
+ * Restores the subnetwork view back to full master network topology.
+ */
 window.resetToFull = async function () {
   const loader = document.getElementById("loader");
   const progressBar = document.getElementById("progress-bar");
@@ -344,6 +372,9 @@ window.resetToFull = async function () {
   }
 };
 
+/**
+ * Extracts a subnetwork centered around user-specified target genes up to a specified depth.
+ */
 window.runFilter = async function () {
   const text = document.getElementById("target-input").value;
   if (!text.trim()) {
@@ -428,9 +459,6 @@ window.runFilter = async function () {
 
   if (keptEdgeIndices.size === 0) {
     if (startNodes.size > 0) {
-      print(
-        "No edges found, but valid targets exist. Automatically showing Rogue genes.",
-      );
       if (typeof VISIBILITY_STATE !== "undefined") {
         VISIBILITY_STATE.Rogue = 2;
       }

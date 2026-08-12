@@ -1,6 +1,17 @@
-// graph.js
+/**
+ * graph.js - Visual Styling, Zooming, and Camera Navigation Module
+ * 
+ * Manages color re-application, node visibility calculations, D3 zoom behaviors,
+ * pan/select interactive mode toggling, and automatic camera framing (autoFit).
+ */
+
+/** D3 Zoom Behavior setup with scale extent limits */
 const zoomBehavior = d3.zoom().scaleExtent([0.1, 10]);
 
+/**
+ * Re-applies node and link visual styling based on current legend toggles, target inputs,
+ * functional cluster assignments, and node degree connectivity.
+ */
 window.reapplyColors = function () {
   if (typeof initIRPControls === "function") initIRPControls();
   if (typeof initLegendStructure === "function") initLegendStructure();
@@ -25,6 +36,7 @@ window.reapplyColors = function () {
   window.renderEdgeLegend();
   window.renderClusterLegend();
 
+  // Compute node degrees based on visible edges
   const nodeDegrees = new Map();
   nodes.forEach((n) => nodeDegrees.set(n.id, 0));
 
@@ -37,6 +49,7 @@ window.reapplyColors = function () {
     }
   });
 
+  // Evaluate visual properties for each node
   nodes.forEach((n) => {
     const deg = nodeDegrees.get(n.id) || 0;
     n.isRogue = deg === 0;
@@ -55,7 +68,7 @@ window.reapplyColors = function () {
     let finalLabel = baseSpec.label;
     let isTargetMatched = false;
 
-    // Clusters
+    // Evaluate functional cluster overlays
     if (CLUSTER_STATE.data.has(n.id)) {
       const clusterName = CLUSTER_STATE.data.get(n.id);
       if (CLUSTER_STATE.active.has(clusterName)) {
@@ -71,7 +84,7 @@ window.reapplyColors = function () {
       }
     }
 
-    // Targets
+    // Evaluate target gene match status
     let targetState = VISIBILITY_STATE.Target;
     if (targetState === true) targetState = 2;
     if (targetState === false) targetState = 0;
@@ -90,7 +103,7 @@ window.reapplyColors = function () {
       }
     }
 
-    // Rogues
+    // Evaluate isolated/rogue node visibility
     let rogueState = VISIBILITY_STATE.Rogue;
     if (rogueState === true) rogueState = 2;
     if (rogueState === false) rogueState = 0;
@@ -109,7 +122,7 @@ window.reapplyColors = function () {
       if (isVisible) finalLabel += " (Rogue)";
     }
 
-    // Apply Visuals
+    // Apply resolved colors and stroke properties
     if (!isVisible) {
       n.color = CONFIG.visuals.colors.Transparent;
       n.fillColor = CONFIG.visuals.colors.Transparent;
@@ -147,10 +160,16 @@ window.reapplyColors = function () {
   requestAnimationFrame(window.draw);
 };
 
+/**
+ * Triggers full visual color re-application across the network view.
+ */
 window.highlightCurrentView = function () {
   window.reapplyColors();
 };
 
+/**
+ * Automatically adjusts camera scale and translation to center all visible graph elements.
+ */
 window.autoFit = function () {
   if (nodes.length === 0) return;
   let minX = Infinity,
@@ -191,6 +210,10 @@ window.autoFit = function () {
   requestAnimationFrame(window.draw);
 };
 
+/**
+ * Toggles canvas interaction mode between "pan" (panning/zooming) and "select" (node/edge selection).
+ * @param {string} mode - Interaction mode ("pan" or "select").
+ */
 window.setMode = function (mode) {
   CURRENT_MODE = mode;
   document.body.className = mode === "pan" ? "mode-pan" : "mode-select";

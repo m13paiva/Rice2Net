@@ -1,4 +1,13 @@
-// controls.js
+/**
+ * controls.js - UI Event Listeners & Control Handlers Module
+ * 
+ * Configures IRP threshold sliders, target gene input parsing, target file upload listeners,
+ * theme toggles, physics control bindings, and layout recalculation triggers.
+ */
+
+/**
+ * Dynamically initializes IRP score threshold slider and number input elements.
+ */
 function initIRPControls() {
   const targetInput = document.getElementById("target-input");
   if (targetInput && !document.getElementById("irp-control-container")) {
@@ -47,6 +56,10 @@ function initIRPControls() {
   }
 }
 
+/**
+ * Updates IRP threshold control values programmatically.
+ * @param {number|string} val - Threshold score value.
+ */
 window.updateIRPControlUI = function (val) {
   const slider = document.getElementById("irp-slider");
   const number = document.getElementById("irp-number");
@@ -60,6 +73,10 @@ window.updateIRPControlUI = function (val) {
   }
 };
 
+/**
+ * Loads and populates target gene text area from a user-uploaded text file.
+ * @param {HTMLInputElement} input - File input element.
+ */
 window.loadTargetFile = function (input) {
   if (input.files && input.files[0]) {
     const reader = new FileReader();
@@ -76,6 +93,9 @@ document.getElementById("target-input").addEventListener("input", () => {
   highlightDebounce = setTimeout(window.reapplyColors, 500);
 });
 
+/**
+ * Resets target gene inputs, IRP thresholds, and network subnetwork filters.
+ */
 window.clearTargets = function () {
   if (typeof window.updateIRPControlUI === "function") {
     window.updateIRPControlUI(0);
@@ -90,16 +110,15 @@ window.clearTargets = function () {
   else window.reapplyColors();
 };
 
+/**
+ * Toggles application theme between dark and light modes.
+ * @param {boolean} isLight - True if light mode selected.
+ */
 window.toggleTheme = function (isLight) {
   THEME = isLight ? "light" : "dark";
 
-  // By omitting document.body.classList.add("light-mode"), the entire UI remains locked into
-  // its original CSS dark mode state. The canvas visual logic naturally handles the light background.
-
   const text = isLight ? "#333" : "#eee";
   if (document.getElementById("stats"))
-    document.getElementById("stats").style.color = text;
-  if (document.getElementById("legend"))
     document.getElementById("legend").style.color = text;
   const lbl = document.getElementById("tt-label");
   if (lbl) lbl.style.color = isLight ? "#000" : "#fff";
@@ -125,6 +144,9 @@ window.toggleTheme = function (isLight) {
   }
 };
 
+/**
+ * Triggers a fresh layout recalculation from initial node positions.
+ */
 window.recalculateStatic = function () {
   nodes.forEach((n) => {
     n.x = undefined;

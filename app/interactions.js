@@ -1,4 +1,17 @@
-// interactions.js
+/**
+ * interactions.js - User Mouse/Pointer Interaction & Detail View Module
+ * 
+ * Manages spatial edge hover detection, mouseover tooltips, click selection handlers,
+ * node details panel, edge details panel (with TF-promoter binding events), and context menus.
+ */
+
+/**
+ * Finds the closest visible edge near the target canvas coordinates.
+ * @param {number} wx - World X coordinate.
+ * @param {number} wy - World Y coordinate.
+ * @param {number} threshold - Hit test distance threshold.
+ * @returns {Object|null} Closest hovered edge or null.
+ */
 function getHoveredEdge(wx, wy, threshold) {
   let closestEdge = null;
   let minDistSq = threshold * threshold;
@@ -92,6 +105,10 @@ function getHoveredEdge(wx, wy, threshold) {
 
 let edgeHoverTimer = null;
 
+/**
+ * Handles mouse movement events in select mode, displaying node/edge tooltips.
+ * @param {MouseEvent} event - Mouse movement event.
+ */
 function onMouseMoveSelect(event) {
   if (!quadtree) return;
   const [mx, my] = d3.pointer(event);
@@ -163,6 +180,11 @@ function onMouseMoveSelect(event) {
   }
 }
 
+/**
+ * Returns formatted display text for a node (symbol and ID).
+ * @param {Object} node - Node object.
+ * @returns {string} Formatted node display string.
+ */
 function getNodeDisplayText(node) {
   const identifier = (node && (node.identifier || (node.metadata && node.metadata.identifier)));
   if (identifier && identifier.trim() !== "" && identifier !== ".") return identifier;
@@ -173,6 +195,10 @@ function getNodeDisplayText(node) {
   return `${symbol} (${node.id})`;
 }
 
+/**
+ * Handles click events on the canvas in select mode to show node/edge detail panels.
+ * @param {MouseEvent} event - Click event object.
+ */
 function onClickSelect(event) {
   if (!quadtree) return;
   const [mx, my] = d3.pointer(event);
@@ -189,11 +215,18 @@ function onClickSelect(event) {
   }
 }
 
+/**
+ * Programmatically selects a node by ID and opens its detail panel.
+ * @param {string} id - Target node ID.
+ */
 window.selectNode = function (id) {
   const node = nodes.find((n) => n.id === id);
   if (node) showNodeDetails(node);
 };
 
+/**
+ * Closes active detail modal boxes and overlays.
+ */
 window.closeDetails = function () {
   document.getElementById("detail-box").style.display = "none";
   document.getElementById("detail-overlay").style.display = "none";
@@ -210,6 +243,10 @@ function applyDynamicDetailBoxStyles() {
   }
 }
 
+/**
+ * Displays details for a selected edge link, fetching TF-promoter binding events when regulation mode is active.
+ * @param {Object} edge - Selected edge link object.
+ */
 window.showEdgeDetails = async function (edge) {
   SELECTED_NODE = null;
   const detailBox = document.getElementById("detail-box");
@@ -404,9 +441,18 @@ window.showEdgeDetails = async function (edge) {
       console.error(err);
       bindsContainer.innerHTML = `<div style="text-align:center; padding:10px; color:#d9534f;">Failed to load binding data.</div>`;
     }
+  } else {
+    detailContent.innerHTML = `
+      <div class="detail-row" style="margin-top: 15px;"><div class="detail-label">Weight</div><div class="detail-value">${weight}</div></div>
+      <div class="detail-row"><div class="detail-label">IRP Score</div><div class="detail-value">${irp}</div></div>
+    `;
   }
 };
 
+/**
+ * Displays details modal panel for a selected node, fetching full attributes from the Neo4j API.
+ * @param {Object} node - Selected node object.
+ */
 async function showNodeDetails(node) {
   SELECTED_NODE = node;
   const detailBox = document.getElementById("detail-box");
@@ -454,7 +500,7 @@ async function showNodeDetails(node) {
       }
     }
   } catch (error) {
-    console.log("API Error:", error);
+    console.error("API Error:", error);
   }
 
   document.getElementById("d-id").innerHTML = `<div style="${iconStyle}"></div>${getNodeDisplayText(node)}`;
@@ -624,6 +670,9 @@ async function showNodeDetails(node) {
 }
 window.showNodeDetails = showNodeDetails;
 
+/**
+ * Context menu handler for right-clicking nodes in select mode.
+ */
 canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const menu = document.getElementById('context-menu');
@@ -701,6 +750,10 @@ document.addEventListener('click', (e) => {
     if (menu) menu.style.display = 'none';
 });
 
+/**
+ * Handles context menu actions (expand, contract, pop).
+ * @param {string} action - Context menu action identifier.
+ */
 window.handleContextMenuClick = function(action) {
     const menu = document.getElementById('context-menu');
     if (!menu) return;

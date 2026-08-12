@@ -1,20 +1,31 @@
+/**
+ * server.js - Express Middleware API Server for Neo4j Backend Integration
+ * 
+ * Provides RESTful API endpoints for streaming initial network topology, fetching
+ * regulation edge directions, loading functional gene clusters, querying TF-promoter
+ * binding events, and fetching comprehensive node attribute metadata.
+ */
+
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const neo4j = require("neo4j-driver");
-
-const print = console.log;
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "200mb" }));
 app.use(express.urlencoded({ limit: "200mb", extended: true }));
 
+/** Initialize Neo4j Driver Connection */
 const driver = neo4j.driver(
   process.env.NEO4J_URI,
   neo4j.auth.basic(process.env.NEO4J_USER, process.env.NEO4J_PASSWORD),
 );
 
+/**
+ * GET /api/network/init
+ * Streams lightweight master network topology (nodes and coexpression edges) as JSON.
+ */
 app.get("/api/network/init", (req, res) => {
   const session = driver.session();
   res.setHeader("Content-Type", "application/json");
@@ -74,20 +85,24 @@ app.get("/api/network/init", (req, res) => {
               session.close();
             },
             onError: (err) => {
-              print("Edge Stream Error:", err);
+              console.error("Edge Stream Error:", err);
               res.end();
               session.close();
             },
           });
       },
       onError: (err) => {
-        print("Node Stream Error:", err);
+        console.error("Node Stream Error:", err);
         res.end();
         session.close();
       },
     });
 });
 
+/**
+ * POST /api/network/edges/regulates
+ * Queries regulation relationship directions (REGULATES) for requested edge pairs.
+ */
 app.post("/api/network/edges/regulates", async (req, res) => {
   const { pairs } = req.body;
 
@@ -131,6 +146,10 @@ app.post("/api/network/edges/regulates", async (req, res) => {
   }
 });
 
+/**
+ * GET /api/network/edges/binds
+ * Fetches detailed TF-promoter binding motif events for a given source -> target pair.
+ */
 app.get("/api/network/edges/binds", async (req, res) => {
   const { source, target } = req.query;
 
@@ -183,6 +202,10 @@ app.get("/api/network/edges/binds", async (req, res) => {
   }
 });
 
+/**
+ * GET /api/network/clusters
+ * Fetches functional cluster module definitions and assigned gene lists.
+ */
 app.get("/api/network/clusters", async (req, res) => {
   const session = driver.session();
   try {
@@ -198,13 +221,17 @@ app.get("/api/network/clusters", async (req, res) => {
 
     res.json({ clusters });
   } catch (error) {
-    print("Cluster fetch error:", error);
+    console.error("Cluster fetch error:", error);
     res.status(500).json({ error: "Failed to fetch clusters." });
   } finally {
     await session.close();
   }
 });
 
+/**
+ * GET /api/network/node/:id
+ * Fetches comprehensive metadata annotations for a single gene node (GO, KEGG, MapMan, UniProt, TF info).
+ */
 app.get("/api/network/node/:id", async (req, res) => {
   const session = driver.session();
   const nodeId = req.params.id;
@@ -240,12 +267,12 @@ app.get("/api/network/node/:id", async (req, res) => {
     );
 
     if (result.records.length === 0) {
-      print(`Node not found in DB: ${nodeId}`);
+      console.warn(`Node not found in DB: ${nodeId}`);
       return res.status(404).json({ error: "Node not found" });
     }
     res.json(result.records[0].get("metadata"));
   } catch (error) {
-    print("Metadata Error:", error);
+    console.error("Metadata Error:", error);
     res.status(500).json({ error: "Metadata fetch failed." });
   } finally {
     await session.close();
@@ -253,4 +280,4 @@ app.get("/api/network/node/:id", async (req, res) => {
 });
 
 const PORT = 3000;
-app.listen(PORT, () => print(`Resilient Middleware running on port ${PORT}.`));
+app.listen(PORT, () => console.log(`API Middleware running on port ${PORT}.`));

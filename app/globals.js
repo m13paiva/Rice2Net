@@ -1,3 +1,11 @@
+/**
+ * globals.js - Global State & Configuration Registry
+ * 
+ * Central registry for application state, theme palettes, visual specifications,
+ * random number generation, visibility state, and global utility helpers.
+ */
+
+// Seeded random number generator for reproducible force layout simulations
 let _seed = 42;
 function mulberry32(a) {
   return function () {
@@ -12,22 +20,31 @@ function random() {
   return rng();
 }
 
+/** Global Application Theme & Performance Limits */
 let THEME = "dark";
 const PERFORMANCE_LIMIT = 5000;
 const PERFORMANCE_LIMIT_EDGES = 40000;
 
+/** Canvas Interaction Mode & Selection State */
 let CURRENT_MODE = "pan";
 let SELECTED_NODE = null;
 let HOVERED_EDGE = null;
 
+/** Primary Raw Network Topology Storage */
 let RAW_DATA = { nodes: [], links: [], adjacency: new Map() };
 
+/** Functional Cluster Annotations State */
 let CLUSTER_STATE = {
   data: new Map(),
   active: new Set(),
   legend: [],
 };
 
+/**
+ * Global Legend Visibility Toggles State
+ * Tracks visibility levels for node types, target selections, rogue nodes,
+ * coexpression edges, and regulation edges.
+ */
 let VISIBILITY_STATE = {
   TF: true,
   PredictedTF: true,
@@ -43,10 +60,19 @@ let VISIBILITY_STATE = {
 
 let HAS_LOADED_REGULATES = false;
 
+/**
+ * Checks whether regulation edge rendering mode is currently active.
+ * @returns {boolean} True if regulation edges are visible.
+ */
 window.isRegulationActive = function () {
   return (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
 };
 
+/**
+ * Determines whether a given network edge should be visible based on active legend toggles.
+ * @param {Object} l - Edge link object.
+ * @returns {boolean} True if the edge is visible.
+ */
 window.isEdgeVisible = function (l) {
   const hasInt = l.has_interacts !== false;
   const hasReg = !!(l.has_regulates && (Array.isArray(l.directions) ? l.directions.length > 0 : true));
@@ -58,7 +84,10 @@ window.isEdgeVisible = function (l) {
   return false;
 };
 
-
+/**
+ * Returns the currently active gene ID export format ("MSU" or "RAP").
+ * @returns {string} ID mode string.
+ */
 window.getExportIdMode = function () {
   const checkbox = document.getElementById("export-id-mode");
   return checkbox && checkbox.checked ? "MSU" : "RAP";
@@ -74,6 +103,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 
+/**
+ * Resolves the appropriate node identifier based on the user's export ID setting.
+ * @param {Object} node - Node object.
+ * @returns {string} Formatted node ID.
+ */
 window.getExportNodeId = function (node) {
   if (!node) return "";
   const mode = window.getExportIdMode();
@@ -105,12 +139,12 @@ window.getExportNodeId = function (node) {
   else return rap || msu || String(node.id || "");
 };
 
+/** Integrated Rank Prediction (IRP) Filter Threshold State */
 let IRP_STATE = { threshold: 0.0 };
 
 const PARAMS = new URLSearchParams(window.location.search);
 
-// Your highly sophisticated "temporary" fix.
-// Hardcoded because your browser isn't a terminal.
+/** Default cluster definitions for functional module annotations */
 let clusterFiles = [
   "A - response to external biotic stimulus.txt",
   "B - photosynthesis.txt",
@@ -127,7 +161,10 @@ let clusterFiles = [
 ];
 let clusterNames = clusterFiles.map((f) => f.replace(/\.txt$/i, ""));
 
-// Kept this so you don't break whatever other spaghetti code relies on it
+/**
+ * Updates the active cluster file registry.
+ * @param {Array<string>} fileList - List of cluster filenames.
+ */
 window.processClusterDirectory = function (fileList) {
   if (!Array.isArray(fileList)) return;
 
@@ -139,6 +176,7 @@ window.processClusterDirectory = function (fileList) {
   }
 };
 
+/** Dark Theme Color Palette Definition */
 const DARK_PALETTE = {
   EdgeRGB: "200, 200, 200",
   Transparent: "rgba(0,0,0,0)",
@@ -163,6 +201,7 @@ const DARK_PALETTE = {
   ],
 };
 
+/** Light Theme Color Palette Definition */
 const LIGHT_PALETTE = {
   EdgeRGB: "40, 40, 40",
   Transparent: "rgba(0,0,0,0)",
@@ -178,8 +217,8 @@ const LIGHT_PALETTE = {
     "#F58231", // Bright Orange
     "#911EB4", // Deep Purple
     "#F032E6", // Bright Magenta
-    "#00BFFF", // Deep Sky Blue (Cyan substitute for white bg)
-    "#E5A800", // Goldenrod (Yellow substitute for white bg)
+    "#00BFFF", // Deep Sky Blue
+    "#E5A800", // Goldenrod
     "#8CB302", // Apple Green / Olive
     "#008080", // Raspberry Pink
     "#D81B60", // Teal
@@ -187,6 +226,7 @@ const LIGHT_PALETTE = {
   ],
 };
 
+/** Master Application Visual & Physics Configuration */
 const CONFIG = {
   files: {
     json: "main_network.json",
@@ -213,6 +253,11 @@ const CONFIG = {
   },
 };
 
+/**
+ * Checks whether a given node type string represents a transcription factor or related regulator.
+ * @param {string} type - Node type string.
+ * @returns {boolean} True if type is TF-like.
+ */
 window.isTfLikeType = function (type) {
   const t = String(type || "")
     .trim()
@@ -225,6 +270,11 @@ window.isTfLikeType = function (type) {
   );
 };
 
+/**
+ * Returns visual rendering specifications (shape, color, label, visibility key) for a node type.
+ * @param {string} type - Node type identifier.
+ * @returns {Object} Visual specification object.
+ */
 window.getTypeVisualSpec = function (type) {
   const t = String(type || "Gene")
     .trim()
@@ -278,6 +328,12 @@ window.getTypeVisualSpec = function (type) {
   };
 };
 
+/**
+ * Applies type-specific styling properties (colors, shapes, outlines) directly to a node object.
+ * @param {Object} node - Target node object.
+ * @param {string|null} colorOverride - Optional color override.
+ * @param {string|null} labelOverride - Optional label override.
+ */
 window.applyNodeTypeStyling = function (
   node,
   colorOverride = null,
@@ -294,11 +350,17 @@ window.applyNodeTypeStyling = function (
   node.color = color;
 };
 
+/**
+ * Checks whether a given node type is visible based on VISIBILITY_STATE.
+ * @param {string} type - Node type string.
+ * @returns {boolean} True if visible.
+ */
 window.isTypeVisible = function (type) {
   const spec = window.getTypeVisualSpec(type);
   return !!VISIBILITY_STATE[spec.visibilityKey];
 };
 
+// Initialize UI control inputs with default configuration settings
 document.getElementById("viz-base-size").value = CONFIG.visuals.baseSize;
 document.getElementById("viz-size-mult").value = CONFIG.visuals.sizeMult;
 document.getElementById("viz-edge-width").value = CONFIG.visuals.edgeWidth;
@@ -308,6 +370,7 @@ document.getElementById("phys-link-dist").value = CONFIG.physics.linkDist;
 document.getElementById("phys-collision").value = CONFIG.physics.collision;
 document.getElementById("phys-radial").value = CONFIG.physics.radial;
 
+/** Global Simulation and Graph State Variables */
 let simulation,
   isInteracting = false;
 let nodes = [],
@@ -320,12 +383,17 @@ const ticksPerFrame = 25;
 let debounceTimer = null;
 let highlightDebounce = null;
 
+/**
+ * Determines whether the current graph exceeds performance threshold limits.
+ * @returns {boolean} True if the network is considered heavy.
+ */
 window.isHeavyGraph = function () {
   return (
     nodes.length > PERFORMANCE_LIMIT || links.length > PERFORMANCE_LIMIT_EDGES
   );
 };
 
+/** Canvas Initialization & Resize Handling */
 const canvas = document.getElementById("network-canvas");
 const ctx = canvas.getContext("2d");
 let width, height;

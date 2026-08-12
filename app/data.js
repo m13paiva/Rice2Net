@@ -1,13 +1,23 @@
+/**
+ * data.js - Data Ingestion, Filtering, and API Integration Module
+ * 
+ * Handles network data initialization from the backend API, batch regulation edge fetching,
+ * functional cluster metadata loading, node metadata hydration, and subnetwork filtering.
+ */
+
 window.__APP_CORE__ = window.__APP_CORE__ || {};
 
 window.IS_IMPORTED_NETWORK = false;
 window.IS_FILTERED_NETWORK = false;
 
-// CSS safeguard to prevent your UI from spontaneously rendering the legend when it shouldn't
+/** Dynamic CSS rule to control cluster legend display based on network availability */
 const clusterStyle = document.createElement("style");
 clusterStyle.innerHTML = `body.hide-clusters #legend-clusters { display: none !important; }`;
 document.head.appendChild(clusterStyle);
 
+/**
+ * Updates cluster legend availability state based on filtering and custom import status.
+ */
 window.updateClusterAvailability = function () {
   const isFiltered = window.IS_FILTERED_NETWORK || (nodes.length > 0 && RAW_DATA.nodes && nodes.length < RAW_DATA.nodes.length);
   CLUSTER_STATE.isAvailable = !(window.IS_IMPORTED_NETWORK || isFiltered);
@@ -24,6 +34,12 @@ window.updateClusterAvailability = function () {
   }
 };
 
+/**
+ * Builds an adjacency matrix mapping node IDs to their connected neighbors and link indices.
+ * @param {Array<Object>} nodeList - Array of node objects.
+ * @param {Array<Object>} linkList - Array of edge link objects.
+ * @returns {Map<string, Array<{n: string, idx: number}>>} Adjacency map.
+ */
 function buildAdjacency(nodeList, linkList) {
   const adj = new Map();
   nodeList.forEach((n) => adj.set(String(n.id), []));
@@ -40,6 +56,9 @@ function buildAdjacency(nodeList, linkList) {
   return adj;
 }
 
+/**
+ * Applies IRP threshold filtering and target gene isolation to update active graph nodes and links.
+ */
 window.applyEdgeFilter = function () {
   const threshold = IRP_STATE.threshold;
 
@@ -134,6 +153,9 @@ window.applyEdgeFilter = function () {
   if (typeof window.draw === "function") requestAnimationFrame(window.draw);
 };
 
+/**
+ * Batches and fetches regulation relationship directions from the Neo4j API endpoint.
+ */
 window.fetchRegulationEdges = async function () {
   const pendingEdges = links.filter((l) => !l.reg_matched);
   if (pendingEdges.length === 0) {
@@ -226,12 +248,15 @@ window.fetchRegulationEdges = async function () {
     if (typeof window.draw === "function") requestAnimationFrame(window.draw);
 
   } catch (e) {
-    alert(`Failed at Batch: ${e.message}`);
+    alert(`Regulation data request failed: ${e.message}`);
   } finally {
     if (loader) loader.style.display = "none";
   }
 };
 
+/**
+ * Loads functional cluster definitions and gene assignments from the backend API.
+ */
 async function loadClusters() {
   const loaderText = document.getElementById("loader-text");
   if (loaderText) loaderText.innerText = "LOADING CLUSTERS FROM DB...";
@@ -265,6 +290,9 @@ async function loadClusters() {
   window.updateClusterAvailability();
 }
 
+/**
+ * Hydrates local node metadata from database nodes mapping.
+ */
 async function hydrateMetadata() {
   const loaderText = document.getElementById("loader-text");
   if (loaderText) loaderText.innerText = "APPLYING METADATA...";
@@ -303,6 +331,9 @@ async function hydrateMetadata() {
   });
 }
 
+/**
+ * Caches a metadata snapshot for all active nodes.
+ */
 function cacheMetaSnapshot() {
   RAW_DATA.metaById = new Map(
     nodes.map((n) => [
@@ -318,6 +349,7 @@ function cacheMetaSnapshot() {
   );
 }
 
+/** Fallback node type styling function */
 window.applyTypeStyling = window.applyTypeStyling || function (n) {
   if (n.originalType === "TF") {
     n.color = CONFIG?.visuals?.colors?.TF || "#d62728";
@@ -343,6 +375,9 @@ window.applyTypeStyling = window.applyTypeStyling || function (n) {
   }
 };
 
+/**
+ * Primary entry point for fetching network topology and starting application setup.
+ */
 async function main() {
   const loader = document.getElementById("loader");
   const loaderText = document.getElementById("loader-text");
@@ -419,8 +454,8 @@ async function main() {
       if (typeof startCalculation === "function") startCalculation(true);
     }
   } catch (error) {
-    console.log("Failed to fetch from Neo4j API.", error);
-    loaderText.innerText = "Error: Database connection failed";
+    console.error("Failed to fetch from Neo4j API.", error);
+    if (loaderText) loaderText.innerText = "Error: Database connection failed";
   }
 }
 

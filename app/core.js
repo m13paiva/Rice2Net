@@ -1,6 +1,14 @@
-// core-draw.js
-// Data loading, metadata hydration, adjacency, filtering/reset, simulation, draw, main core helpers.
+/**
+ * core.js - Secondary Network Bootstrapper & Import Module
+ * 
+ * Handles custom network graph imports (JSON, edge list TSVs), local subnetwork physics,
+ * and fallback rendering helper definitions.
+ */
 
+/**
+ * Imports a custom network layout structure from a user-uploaded JSON file.
+ * @param {HTMLInputElement} input - File input element.
+ */
 window.importJSON = function (input) {
   if (!input.files || !input.files[0]) return;
   const fileName = input.files[0].name;
@@ -63,6 +71,10 @@ window.importJSON = function (input) {
   }, 50);
 };
 
+/**
+ * Imports custom edge links from a user-uploaded tabular TSV file.
+ * @param {HTMLInputElement} input - File input element.
+ */
 window.importEdges = function (input) {
   if (!input.files || !input.files[0]) return;
   const fileName = input.files[0].name;
@@ -149,6 +161,9 @@ window.importEdges = function (input) {
   }, 50);
 };
 
+/**
+ * Calculates degrees for nodes in imported graphs.
+ */
 function calculateDegrees() {
   nodes.forEach((n) => (n.deg = 0));
   links.forEach((l) => {
@@ -165,6 +180,9 @@ function calculateDegrees() {
   });
 }
 
+/**
+ * Updates visual radius dimensions for imported nodes.
+ */
 function updateVisualProps() {
   const base = parseFloat(document.getElementById("viz-base-size").value);
   const mult = parseFloat(document.getElementById("viz-size-mult").value);
@@ -174,6 +192,9 @@ function updateVisualProps() {
   });
 }
 
+/**
+ * Updates physics simulation parameters for imported graphs.
+ */
 function updatePhysicsParams() {
   const rep = -parseInt(document.getElementById("phys-repulsion").value);
   const dist = parseInt(document.getElementById("phys-link-dist").value);
@@ -193,6 +214,10 @@ function updatePhysicsParams() {
   }
 }
 
+/**
+ * Runs localized D3 force simulation for a subset of affected node IDs.
+ * @param {Array<string>} affectedIds - Node IDs allowed to move.
+ */
 window.runLocalPhysics = function (affectedIds) {
   if (!simulation) return;
 
@@ -235,6 +260,10 @@ window.runLocalPhysics = function (affectedIds) {
   simulation.alpha(0.5).restart();
 };
 
+/**
+ * Runs layout calculation for imported graph topologies.
+ * @param {boolean} resetParams - Reset parameters flag.
+ */
 function startCalculation(resetParams = true) {
   rng = mulberry32(_seed);
   nodes.forEach((n) => {
@@ -314,6 +343,9 @@ function startCalculation(resetParams = true) {
   step();
 }
 
+/**
+ * Fallback drawing routine for imported networks.
+ */
 window.draw = function () {
   ctx.save();
   ctx.fillStyle = THEME === "dark" ? "#1a1a1a" : "#ffffff";
@@ -437,6 +469,10 @@ window.draw = function () {
   ctx.restore();
 };
 
+/**
+ * Finalizes post-calculation setup for imported graph views.
+ * @param {boolean} resetParams - Reset parameters flag.
+ */
 function finishSetup(resetParams) {
   document.getElementById("val-nodes").innerText =
     nodes.length.toLocaleString();

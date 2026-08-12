@@ -1,6 +1,15 @@
-// sim.js
+/**
+ * sim.js - Force-Directed Layout Simulation & Canvas Rendering Module
+ * 
+ * Manages D3 force simulation physics, node degree calculation, dynamic visual sizing,
+ * canvas element drawing (nodes, standard edges, directional regulation arrows), and auto-positioning.
+ */
+
 window.__APP_CORE__ = window.__APP_CORE__ || {};
 
+/**
+ * Calculates connected degrees for all active nodes.
+ */
 function calculateDegrees() {
   nodes.forEach((n) => (n.deg = 0));
   links.forEach((l) => {
@@ -17,6 +26,9 @@ function calculateDegrees() {
   });
 }
 
+/**
+ * Updates dynamic node radii based on node degree and base sizing parameters.
+ */
 function updateVisualProps() {
   const base = parseFloat(document.getElementById("viz-base-size").value);
   const mult = parseFloat(document.getElementById("viz-size-mult").value);
@@ -26,6 +38,9 @@ function updateVisualProps() {
   });
 }
 
+/**
+ * Updates D3 force simulation parameters (repulsion, link distance, collision, radial force).
+ */
 function updatePhysicsParams() {
   const rep = -parseInt(document.getElementById("phys-repulsion").value);
   const dist = parseInt(document.getElementById("phys-link-dist").value);
@@ -49,6 +64,10 @@ function updatePhysicsParams() {
   }
 }
 
+/**
+ * Starts layout calculation using D3 force simulation over a fixed frame step.
+ * @param {boolean} resetParams - Whether to reset physics controls based on network size.
+ */
 function startCalculation(resetParams = true) {
   rng = mulberry32(_seed);
 
@@ -132,6 +151,17 @@ function startCalculation(resetParams = true) {
   step();
 }
 
+/**
+ * Draws a directional regulation arrow between source and target coordinates.
+ * @param {CanvasRenderingContext2D} ctx - Canvas context.
+ * @param {number} sx - Source X coordinate.
+ * @param {number} sy - Source Y coordinate.
+ * @param {number} tx - Target X coordinate.
+ * @param {number} ty - Target Y coordinate.
+ * @param {number} tr - Target node radius.
+ * @param {boolean} isDashed - Whether to draw a dashed line.
+ * @param {number} alpha - Opacity value.
+ */
 window.drawArrow = function (ctx, sx, sy, tx, ty, tr, isDashed, alpha) {
   ctx.save();
   const dx = tx - sx,
@@ -171,6 +201,9 @@ window.drawArrow = function (ctx, sx, sy, tx, ty, tr, isDashed, alpha) {
   ctx.restore();
 };
 
+/**
+ * Master HTML5 Canvas drawing loop for nodes, links, and hover highlights.
+ */
 window.draw = function () {
   const w = typeof width !== "undefined" ? width : window.innerWidth || 1000;
   const h = typeof height !== "undefined" ? height : window.innerHeight || 1000;
@@ -378,6 +411,10 @@ window.draw = function () {
   ctx.restore();
 };
 
+/**
+ * Finalizes post-calculation setup, positioning rogue nodes along a peripheral ring.
+ * @param {boolean} resetParams - Whether physics parameters were reset.
+ */
 function finishSetup(resetParams) {
   if (typeof window.updateActiveCounts === "function") {
     window.updateActiveCounts();

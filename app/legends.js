@@ -1,4 +1,13 @@
-// legends.js
+/**
+ * legends.js - Network Legend UI & Visibility Control Module
+ * 
+ * Manages rendering of node type legends, target gene indicators, edge type toggles,
+ * and functional cluster module filters.
+ */
+
+/**
+ * Initializes HTML DOM structure for sidebar legend containers.
+ */
 function initLegendStructure() {
   const legend = document.getElementById("legend");
   if (!legend) return;
@@ -65,6 +74,9 @@ function initLegendStructure() {
   legend.appendChild(clusters);
 }
 
+/**
+ * Renders target gene indicator legend control.
+ */
 window.renderTargetLegend = function () {
   const legendTarget = document.getElementById("legend-target");
   if (!legendTarget) return;
@@ -112,6 +124,9 @@ window.renderTargetLegend = function () {
   }
 };
 
+/**
+ * Renders node type legend items (TF, Predicted TF, Predicted TR, Annotated Gene, Gene, Rogue Gene).
+ */
 window.renderTypeLegend = function () {
   const container = document.getElementById("legend-types");
   if (!container) return;
@@ -181,6 +196,9 @@ window.renderTypeLegend = function () {
     }).join("");
 };
 
+/**
+ * Renders edge type legend items (Coexpression, Regulation).
+ */
 window.renderEdgeLegend = function () {
   const container = document.getElementById("legend-edges");
   if (!container) return;
@@ -216,11 +234,13 @@ window.renderEdgeLegend = function () {
     }).join("");
 };
 
+/**
+ * Renders functional cluster module legend list.
+ */
 window.renderClusterLegend = function () {
   const container = document.getElementById("legend-clusters");
   if (!container) return;
 
-  // Forcefully wipe the DOM element and hide it if clusters are unavailable
   if (CLUSTER_STATE.legend.length === 0 || CLUSTER_STATE.isAvailable === false) {
     container.style.display = "none";
     container.innerHTML = "";
@@ -287,6 +307,10 @@ window.renderClusterLegend = function () {
   }
 };
 
+/**
+ * Toggles visibility state for a node type category.
+ * @param {string} type - Visibility key.
+ */
 window.toggleType = function (type) {
   if (VISIBILITY_STATE[type] !== undefined) {
     let current = VISIBILITY_STATE[type];
@@ -306,6 +330,10 @@ window.toggleType = function (type) {
   }
 };
 
+/**
+ * Toggles edge type visibility (Coexpression or Regulation).
+ * @param {string} key - Edge visibility key ("EdgeCoexp" or "EdgeBoth").
+ */
 window.toggleEdgeType = async function (key) {
   if (key === "EdgeBoth") {
     let current = VISIBILITY_STATE[key] ?? 0;
@@ -318,12 +346,19 @@ window.toggleEdgeType = async function (key) {
   window.reapplyColors();
 };
 
+/**
+ * Toggles active state for a functional cluster module.
+ * @param {string} name - Cluster module name.
+ */
 window.toggleCluster = function (name) {
   if (CLUSTER_STATE.active.has(name)) CLUSTER_STATE.active.delete(name);
   else CLUSTER_STATE.active.add(name);
   window.reapplyColors();
 };
 
+/**
+ * Toggles active state for all functional cluster modules simultaneously.
+ */
 window.toggleAllClusters = function () {
   const total = CLUSTER_STATE.legend.length;
   const current = CLUSTER_STATE.active.size;
