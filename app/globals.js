@@ -43,6 +43,22 @@ let VISIBILITY_STATE = {
 
 let HAS_LOADED_REGULATES = false;
 
+window.isRegulationActive = function () {
+  return (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
+};
+
+window.isEdgeVisible = function (l) {
+  const hasInt = l.has_interacts !== false;
+  const hasReg = !!(l.has_regulates && (Array.isArray(l.directions) ? l.directions.length > 0 : true));
+  const isRegActive = window.isRegulationActive();
+
+  if (isRegActive && hasReg) return true;
+  if (hasInt) return (VISIBILITY_STATE.EdgeCoexp ?? 2) > 0;
+  if (hasReg) return (VISIBILITY_STATE.EdgeReg ?? 0) > 0;
+  return false;
+};
+
+
 window.getExportIdMode = function () {
   const checkbox = document.getElementById("export-id-mode");
   return checkbox && checkbox.checked ? "MSU" : "RAP";

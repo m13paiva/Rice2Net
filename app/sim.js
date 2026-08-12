@@ -133,10 +133,14 @@ function startCalculation(resetParams = true) {
 }
 
 window.drawArrow = function (ctx, sx, sy, tx, ty, tr, isDashed, alpha) {
+  ctx.save();
   const dx = tx - sx,
     dy = ty - sy;
   const dist = Math.sqrt(dx * dx + dy * dy);
-  if (dist < tr) return;
+  if (dist < tr) {
+    ctx.restore();
+    return;
+  }
 
   const angle = Math.atan2(dy, dx);
   const targetX = tx - Math.cos(angle) * (tr + 2);
@@ -164,6 +168,7 @@ window.drawArrow = function (ctx, sx, sy, tx, ty, tr, isDashed, alpha) {
   ctx.lineTo(targetX, targetY);
   ctx.fillStyle = ctx.strokeStyle;
   ctx.fill();
+  ctx.restore();
 };
 
 window.draw = function () {
@@ -184,6 +189,7 @@ window.draw = function () {
     const edgeW = parseFloat(document.getElementById("viz-edge-width").value);
     const edgeA = parseFloat(document.getElementById("viz-edge-alpha").value);
     const finalAlpha = THEME === "light" ? Math.min(1.0, edgeA * 2.0) : edgeA;
+    const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
 
     ctx.lineWidth = Math.max(edgeW / transform.k, edgeW);
 
@@ -198,36 +204,19 @@ window.draw = function () {
         if ((l.source.isRogue || l.target.isRogue) && !VISIBILITY_STATE.Rogue)
           return;
 
+        const isVisible = window.isEdgeVisible ? window.isEdgeVisible(l) : true;
+        if (!isVisible) return;
+
         const hasInt = l.has_interacts !== false;
-        const hasReg = !!l.has_regulates;
+        const hasReg = !!(l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0);
+        const isThisRegActive = isRegActive && hasReg;
 
-        let st = 2;
-        if (hasInt && !hasReg) st = VISIBILITY_STATE.EdgeCoexp ?? 2;
-        else if (hasInt && hasReg) st = VISIBILITY_STATE.EdgeBoth ?? 0;
-        else if (!hasInt && hasReg) st = VISIBILITY_STATE.EdgeReg ?? 0;
-
-        if (st === 0) return;
-
-        ctx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, ${finalAlpha})`;
-
-        if (hasReg && Array.isArray(l.directions) && l.directions.length > 0) {
+        if (isThisRegActive) {
            const isBidirectional = l.directions.length > 1;
            const offsetDist = 6 / transform.k;
-
-           if (hasInt && st === 1) {
-              ctx.beginPath();
-              ctx.moveTo(l.source.x, l.source.y);
-              ctx.lineTo(l.target.x, l.target.y);
-              ctx.stroke();
-              return;
-           }
-
-           if (hasInt && st === 2) {
-               ctx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
-           }
-
-           const alphaToUse = hasInt ? Math.min(finalAlpha * 2, 1.0) : finalAlpha;
            const isDashed = !hasInt;
+
+           ctx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
 
            l.directions.forEach(dir => {
               let srcNode, tgtNode;
@@ -253,10 +242,12 @@ window.draw = function () {
                    tx += nx; ty += ny;
                  }
               }
-              window.drawArrow(ctx, sx, sy, tx, ty, tgtNode.r || 5, isDashed, alphaToUse);
+              window.drawArrow(ctx, sx, sy, tx, ty, tgtNode.r || 5, isDashed, 1.0);
            });
 
         } else {
+          const currentAlpha = isRegActive ? finalAlpha * 0.4 : finalAlpha;
+          ctx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, ${currentAlpha})`;
           ctx.beginPath();
           ctx.moveTo(l.source.x, l.source.y);
           ctx.lineTo(l.target.x, l.target.y);
@@ -275,10 +266,10 @@ window.draw = function () {
 
       const l = HOVERED_EDGE;
       const hasInt = l.has_interacts !== false;
-      const hasReg = !!l.has_regulates;
-      const st = hasInt && hasReg ? (VISIBILITY_STATE.EdgeBoth ?? 0) : 2;
+      const hasReg = !!(l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0);
+      const isThisRegActive = isRegActive && hasReg;
 
-      if (hasReg && Array.isArray(l.directions) && l.directions.length > 0 && (!hasInt || st === 2)) {
+      if (isThisRegActive) {
          const isBidirectional = l.directions.length > 1;
          const offsetDist = 6 / transform.k;
 

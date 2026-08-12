@@ -488,26 +488,26 @@ window.exportPNG = function () {
           if (!forceShowEdges && (!isSourceVisible || !isTargetVisible)) return;
           if ((l.source.isRogue || l.target.isRogue) && !VISIBILITY_STATE.Rogue) return;
 
+          const isVisible = window.isEdgeVisible ? window.isEdgeVisible(l) : true;
+          if (!isVisible) return;
+
+          const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
           const hasInt = l.has_interacts !== false;
-          const hasReg = !!l.has_regulates;
-          let st = 2;
-          if (hasInt && !hasReg) st = VISIBILITY_STATE.EdgeCoexp ?? 2;
-          else if (hasInt && hasReg) st = VISIBILITY_STATE.EdgeBoth ?? 0;
-          else if (!hasInt && hasReg) st = VISIBILITY_STATE.EdgeReg ?? 0;
+          const hasReg = !!(l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0);
+          const isThisRegActive = isRegActive && hasReg;
 
-          if (st === 0) return;
-          exportCtx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, ${finalAlpha})`;
-
-          if (!hasInt && hasReg) {
-            if (window.drawArrow) window.drawArrow(exportCtx, l.source.x, l.source.y, l.target.x, l.target.y, l.target.r || 5, true, finalAlpha);
-          } else if (hasInt && hasReg) {
-            if (st === 1) {
-              exportCtx.beginPath(); exportCtx.moveTo(l.source.x, l.source.y); exportCtx.lineTo(l.target.x, l.target.y); exportCtx.stroke();
-            } else {
-              exportCtx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
-              if (window.drawArrow) window.drawArrow(exportCtx, l.source.x, l.source.y, l.target.x, l.target.y, l.target.r || 5, false, Math.min(finalAlpha * 2, 1.0));
+          if (isThisRegActive) {
+            exportCtx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
+            if (window.drawArrow) {
+              l.directions.forEach(dir => {
+                let srcNode = String(l.source.id) === dir.src ? l.source : l.target;
+                let tgtNode = String(l.target.id) === dir.tgt ? l.target : l.source;
+                window.drawArrow(exportCtx, srcNode.x, srcNode.y, tgtNode.x, tgtNode.y, tgtNode.r || 5, !hasInt, 1.0);
+              });
             }
           } else {
+            const currentAlpha = isRegActive ? finalAlpha * 0.4 : finalAlpha;
+            exportCtx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, ${currentAlpha})`;
             exportCtx.beginPath(); exportCtx.moveTo(l.source.x, l.source.y); exportCtx.lineTo(l.target.x, l.target.y); exportCtx.stroke();
           }
         }

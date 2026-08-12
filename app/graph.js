@@ -29,14 +29,7 @@ window.reapplyColors = function () {
   nodes.forEach((n) => nodeDegrees.set(n.id, 0));
 
   links.forEach((l) => {
-    const hasInt = l.has_interacts !== false;
-    const hasReg = !!l.has_regulates;
-    let st = 2;
-    if (hasInt && !hasReg) st = VISIBILITY_STATE.EdgeCoexp ?? 2;
-    else if (hasInt && hasReg) st = VISIBILITY_STATE.EdgeBoth ?? 0;
-    else if (!hasInt && hasReg) st = VISIBILITY_STATE.EdgeReg ?? 0;
-
-    if (st > 0) {
+    if (window.isEdgeVisible ? window.isEdgeVisible(l) : true) {
       const sid = typeof l.source === "object" ? l.source.id : l.source;
       const tid = typeof l.target === "object" ? l.target.id : l.target;
       nodeDegrees.set(sid, (nodeDegrees.get(sid) || 0) + 1);

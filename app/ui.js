@@ -17,15 +17,7 @@ window.updateActiveCounts = function () {
     const s = l.source?.id || l.source;
     const t = l.target?.id || l.target;
     if (visibleSet.has(s) && visibleSet.has(t)) {
-      const hasInt = l.has_interacts !== false;
-      const hasReg = !!l.has_regulates;
-
-      let st = 2;
-      if (hasInt && !hasReg) st = VISIBILITY_STATE.EdgeCoexp ?? 2;
-      else if (hasInt && hasReg) st = VISIBILITY_STATE.EdgeBoth ?? 0;
-      else if (!hasInt && hasReg) st = VISIBILITY_STATE.EdgeReg ?? 0;
-
-      if (st > 0) vEdges++;
+      if (window.isEdgeVisible ? window.isEdgeVisible(l) : true) vEdges++;
     }
   });
 

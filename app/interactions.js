@@ -3,16 +3,13 @@ function getHoveredEdge(wx, wy, threshold) {
   let closestEdge = null;
   let minDistSq = threshold * threshold;
 
+  const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
+
   for (let i = 0; i < links.length; i++) {
     const l = links[i];
-    const hasInt = l.has_interacts !== false;
-    const hasReg = !!l.has_regulates;
-    let st = 2;
-    if (hasInt && !hasReg) st = VISIBILITY_STATE.EdgeCoexp ?? 2;
-    else if (hasInt && hasReg) st = VISIBILITY_STATE.EdgeBoth ?? 0;
-    else if (!hasInt && hasReg) st = VISIBILITY_STATE.EdgeReg ?? 0;
+    const isVisible = window.isEdgeVisible ? window.isEdgeVisible(l) : true;
+    if (!isVisible) continue;
 
-    if (st === 0) continue;
     if (!l.source.x || !l.target.x) continue;
     if (l.source.color === CONFIG.visuals.colors.Transparent || l.target.color === CONFIG.visuals.colors.Transparent) continue;
     if (l.source.isRogue && !VISIBILITY_STATE.Rogue) continue;
@@ -34,7 +31,9 @@ function getHoveredEdge(wx, wy, threshold) {
     let tempClickedSrc = null;
     let tempClickedTgt = null;
 
-    if (l.has_regulates && l.directions && l.directions.length > 1) {
+    const isThisRegActive = isRegActive && !!(l.has_regulates && l.directions && l.directions.length > 0);
+
+    if (isThisRegActive && l.directions.length > 1) {
         const offsetDist = 6 / transform.k;
         const dx = tx - sx;
         const dy = ty - sy;
@@ -75,7 +74,7 @@ function getHoveredEdge(wx, wy, threshold) {
             dSq = (wx - (sx + t * (tx - sx))) ** 2 + (wy - (sy + t * (ty - sy))) ** 2;
         }
 
-        if (l.has_regulates && l.directions && l.directions.length === 1) {
+        if (isThisRegActive && l.directions.length === 1) {
             tempClickedSrc = l.directions[0].src;
             tempClickedTgt = l.directions[0].tgt;
         }
@@ -138,8 +137,9 @@ function onMouseMoveSelect(event) {
       if (edge) {
         HOVERED_EDGE = edge;
 
+        const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
         let ttext = `${edge.source.id} &mdash; ${edge.target.id}`;
-        if (edge.has_regulates && edge.clicked_src && edge.clicked_tgt) {
+        if (isRegActive && edge.has_regulates && edge.clicked_src && edge.clicked_tgt) {
             ttext = `${edge.clicked_src} &rarr; ${edge.clicked_tgt}`;
         }
 
@@ -222,11 +222,14 @@ window.showEdgeDetails = async function (edge) {
   const sNode = edge.source;
   const tNode = edge.target;
 
-  const reqSource = edge.clicked_src || (edge.directions && edge.directions.length > 0 ? edge.directions[0].src : sNode.id);
-  const reqTarget = edge.clicked_tgt || (edge.directions && edge.directions.length > 0 ? edge.directions[0].tgt : tNode.id);
+  const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
+  const isThisRegActive = isRegActive && !!(edge.has_regulates && edge.directions && edge.directions.length > 0);
 
-  const sourceObj = String(sNode.id) === reqSource ? sNode : tNode;
-  const targetObj = String(tNode.id) === reqTarget ? tNode : sNode;
+  const reqSource = isThisRegActive ? (edge.clicked_src || (edge.directions && edge.directions.length > 0 ? edge.directions[0].src : sNode.id)) : sNode.id;
+  const reqTarget = isThisRegActive ? (edge.clicked_tgt || (edge.directions && edge.directions.length > 0 ? edge.directions[0].tgt : tNode.id)) : tNode.id;
+
+  const sourceObj = String(sNode.id) === String(reqSource) ? sNode : tNode;
+  const targetObj = String(tNode.id) === String(reqTarget) ? tNode : sNode;
 
   const getIconHtml = (n) => {
     const bg = n.hollow ? "transparent" : n.fillColor || n.color;
@@ -243,7 +246,7 @@ window.showEdgeDetails = async function (edge) {
     </svg>
   `;
 
-  if (edge.has_regulates) {
+  if (isThisRegActive) {
       directionMarker = `
         <svg width="60" height="12" style="vertical-align: middle; margin: 0 5px;">
           <defs>
@@ -267,13 +270,13 @@ window.showEdgeDetails = async function (edge) {
   const weight = edge.weight !== undefined ? edge.weight : "1";
   const irp = edge.irp !== undefined && edge.irp !== null ? edge.irp : "-";
 
-  detailContent.innerHTML = `
-    <div class="detail-row" style="margin-top: 15px;"><div class="detail-label">Weight</div><div class="detail-value">${weight}</div></div>
-    <div class="detail-row"><div class="detail-label">IRP Score</div><div class="detail-value">${irp}</div></div>
-    <div id="binds-container" style="margin-top: 15px;"></div>
-  `;
+  if (isThisRegActive) {
+    detailContent.innerHTML = `
+      <div class="detail-row" style="margin-top: 15px;"><div class="detail-label">Weight</div><div class="detail-value">${weight}</div></div>
+      <div class="detail-row"><div class="detail-label">IRP Score</div><div class="detail-value">${irp}</div></div>
+      <div id="binds-container" style="margin-top: 15px;"></div>
+    `;
 
-  if (edge.has_regulates) {
     const bindsContainer = document.getElementById("binds-container");
     bindsContainer.innerHTML = `<div style="text-align:center; padding:10px; color:#aaa;">Fetching detailed binding events...</div>`;
 
