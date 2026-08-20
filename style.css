@@ -140,11 +140,14 @@ body.light-mode #tooltip { background: rgba(255, 255, 255, 0.95); border: 1px so
 .tt-diamond { transform: rotate(45deg); margin: 2px; }
 
 /* --- PANELS --- */
-.floating-panel { position: absolute; pointer-events: none; z-index: 10; transition: color 0.3s; }
+.floating-panel { position: absolute; pointer-events: none; z-index: 10; transition: color 0.3s; color: #eee; }
 #stats { top: 20px; right: 20px; text-align: right; }
 .stat-row { font-size: 1.1rem; margin-bottom: 4px; opacity: 0.8; }
 .stat-val { font-weight: bold; font-size: 1.2rem; }
 #legend { bottom: 20px; right: 20px; text-align: right; }
+body.light-mode .floating-panel,
+body.light-mode #stats,
+body.light-mode #legend { color: #000; }
 .legend-item { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 8px; font-size: 0.9rem; font-weight: 500;}
 .shape-circle { width: 12px; height: 12px; border-radius: 50%; margin-left: 10px; border: 1px solid rgba(0,0,0,0.2); }
 .shape-diamond { width: 10px; height: 10px; transform: rotate(45deg); margin-left: 10px; margin-right: 2px; border: 1px solid rgba(0,0,0,0.2); }

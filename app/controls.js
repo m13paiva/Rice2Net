@@ -116,10 +116,14 @@ window.clearTargets = function () {
  */
 window.toggleTheme = function (isLight) {
   THEME = isLight ? "light" : "dark";
+  if (isLight) document.body.classList.add("light-mode");
+  else document.body.classList.remove("light-mode");
 
-  const text = isLight ? "#333" : "#eee";
-  if (document.getElementById("stats"))
-    document.getElementById("legend").style.color = text;
+  const text = isLight ? "#000" : "#eee";
+  const statsEl = document.getElementById("stats");
+  if (statsEl) statsEl.style.color = text;
+  const legendEl = document.getElementById("legend");
+  if (legendEl) legendEl.style.color = text;
   const lbl = document.getElementById("tt-label");
   if (lbl) lbl.style.color = isLight ? "#000" : "#fff";
 
@@ -148,6 +152,7 @@ window.toggleTheme = function (isLight) {
  * Triggers a fresh layout recalculation from initial node positions.
  */
 window.recalculateStatic = function () {
+  rng = mulberry32(_seed);
   nodes.forEach((n) => {
     n.x = undefined;
     n.y = undefined;
