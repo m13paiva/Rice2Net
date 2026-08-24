@@ -572,7 +572,7 @@ async function showNodeDetails(node) {
     Object.keys(node.metadata).sort().forEach((k) => {
       if (["TF_ID", "Family", "GO", "RAP_ID", "MSU_ID", "Symbol", "Identifier", "Description"].includes(k) || k.toUpperCase() === "GENE_ID" || k.toUpperCase() === "GENE ID") return;
       const val = String(node.metadata[k]).trim();
-      if (!val || val === "" || val === "." || val.toLowerCase() === "null" || val.toLowerCase() === "none" || k.includes("Pathway") || k.startsWith("KEGG") || k.startsWith("KO")) return;
+      if (!val || val === "" || val === "." || val.toLowerCase() === "null" || val.toLowerCase() === "none" || k.includes("Pathway") || k.startsWith("KEGG")) return;
       html += `<div class="detail-row"><div class="detail-label">${k.replace(/_/g, " ")}</div><div class="detail-value" style="font-size:1rem;">${val}</div></div>`;
     });
   }

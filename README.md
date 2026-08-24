@@ -160,7 +160,6 @@ The data is stored in a Neo4j graph database. As illustrated in `db_structure.pn
 | `Gene` | 46,036 |
 | `MapMan` | 8,751 |
 | `GOTerm` | 4,588 |
-| `KO` | 1,982 |
 | `Motif` | 501 |
 | `Pathway` | 160 |
 | `TFFamily` | 99 |
@@ -179,7 +178,6 @@ The data is stored in a Neo4j graph database. As illustrated in `db_structure.pn
 | `Gene` | `IN_PATHWAY` | `Pathway` | 11,261 |
 | `Gene` | `BELONGS_TO_CLUSTER` | `Cluster` | 11,259 |
 | `MapMan` | `SUBCATEGORY_OF` | `MapMan` | 8,719 |
-| `Gene` | `HAS_KO` | `KO` | 4,517 |
 | `Gene` | `BELONGS_TO_FAMILY` | `TFFamily` | 2,425 |
 | `Gene` | `HAS_MOTIF` | `Motif` | 984 |
 

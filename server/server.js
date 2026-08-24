@@ -245,22 +245,20 @@ app.get("/api/network/node/:id", async (req, res) => {
       WITH n, collect(DISTINCT {code: p.id, name: p.name}) as pathways
       OPTIONAL MATCH (n)-[:BELONGS_TO_FAMILY]->(f:TFFamily)
       WITH n, pathways, collect(DISTINCT {id: n.tf_id, family: f.name}) as tfDetails
-      OPTIONAL MATCH (n)-[:HAS_KO]->(k:KO)
-      WITH n, pathways, tfDetails, collect(DISTINCT k.id) as kos
       OPTIONAL MATCH (n)-[:HAS_GO_TERM]->(g:GOTerm)
-      WITH n, pathways, tfDetails, kos, collect(DISTINCT {id: g.id, name: g.name, domain: g.domain}) as gos
+      WITH n, pathways, tfDetails, collect(DISTINCT {id: g.id, name: g.name, domain: g.domain}) as gos
       OPTIONAL MATCH (n)-[:HAS_MAPMAN]->(m:MapMan)
       OPTIONAL MATCH path=(m)-[:SUBCATEGORY_OF*0..]->(root:MapMan)
       WHERE NOT (root)-[:SUBCATEGORY_OF]->()
-      WITH n, pathways, tfDetails, kos, gos,
+      WITH n, pathways, tfDetails, gos,
            collect(DISTINCT [node in nodes(path) | {bincode: node.bincode, name: node.name}]) as mapmanPaths
       OPTIONAL MATCH (n)-[:HAS_UNIPROT]->(u:Uniprot)
-      WITH n, pathways, tfDetails, kos, gos, mapmanPaths,
+      WITH n, pathways, tfDetails, gos, mapmanPaths,
            collect(DISTINCT {entry: u.entry, entry_name: u.entry_name, gene_names: u.gene_names, protein_names: u.protein_names, reviewed: u.reviewed}) as uniprotNodes
       RETURN {
           id: n.id, symbol: n.symbol, msu_id: n.msu_id, identifier: n.identifier, kegg_gene: n.kegg_gene, full_name: n.full_name,
           keggDetail: pathways, tfDetail: tfDetails, mapmanPaths: mapmanPaths, uniprotDetail: uniprotNodes,
-          attributes: { KO: kos, GO: gos }
+          attributes: { GO: gos }
       } as metadata
     `,
       { nodeId },

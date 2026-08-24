@@ -309,7 +309,7 @@ window.exportGenesTSV = async function () {
     const headers = [
       "Gene_ID", "Type", "Visual_Label", "Symbol", "MSU_ID", "Identifier",
       "Full_Name", "KEGG_Gene", "TF_Transcripts", "TF_Family", "GO_Terms",
-      "KEGG_Pathways", "MapMan_Bins", "Uniprot_Entries", "KO"
+      "KEGG_Pathways", "MapMan_Bins", "Uniprot_Entries"
     ];
 
     const rows = exportNodes.map((n) => {
@@ -361,12 +361,6 @@ window.exportGenesTSV = async function () {
         uniprotStr = Array.from(new Set(d.uniprotDetail.map(u => u.entry))).filter(Boolean).join(",");
       }
       row.push(uniprotStr);
-
-      let koStr = "";
-      if (d.attributes && d.attributes.KO && d.attributes.KO.length > 0) {
-        koStr = Array.from(new Set(d.attributes.KO)).filter(Boolean).join(",");
-      }
-      row.push(koStr);
 
       return row.join("\t");
     });
