@@ -54,7 +54,7 @@ app.use(express.urlencoded({ limit: "2mb", extended: true }));
 // 5. Rate Limiting Configuration
 const standardLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute window
-  max: 200,
+  max: parseInt(process.env.RATE_LIMIT_STANDARD_MAX, 10) || 2000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests. Please try again in 1 minute." },
@@ -62,7 +62,7 @@ const standardLimiter = rateLimit({
 
 const heavyQueryLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 50,
+  max: parseInt(process.env.RATE_LIMIT_HEAVY_MAX, 10) || 50,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Network loading rate limit exceeded for this IP." },
@@ -86,7 +86,7 @@ const driver = neo4j.driver(
 // Strict regex identifier validation to prevent Cypher injection
 const isValidIdentifier = (id) => {
   if (typeof id !== "string") return false;
-  return /^[a-zA-Z0-9_\.\-]{2,64}$/.test(id.trim());
+  return /^[a-zA-Z0-9_\.\:\-]{1,128}$/.test(id.trim());
 };
 
 /**
@@ -333,6 +333,7 @@ app.get("/api/network/clusters", async (req, res) => {
 /**
  * GET /api/network/node/:id
  * Fetches comprehensive metadata and biological annotations for a single gene.
+ * Traverses Gene Ontology (GOTerm), MapMan hierarchy, UniProt, KEGG pathways, TF families, and Clusters.
  */
 app.get("/api/network/node/:id", async (req, res) => {
   const nodeId = req.params.id;
@@ -350,26 +351,45 @@ app.get("/api/network/node/:id", async (req, res) => {
       WITH n LIMIT 1
       OPTIONAL MATCH (n)-[:IN_PATHWAY]->(p:Pathway)
       WITH n, collect(DISTINCT {code: p.id, name: p.name}) as pathways
-      OPTIONAL MATCH (n)-[:IN_ONTOLOGY]->(go:GeneOntology)
-      WITH n, pathways, collect(DISTINCT {id: go.id, name: go.name}) as ontologies
+      OPTIONAL MATCH (n)-[:BELONGS_TO_FAMILY]->(f:TFFamily)
+      WITH n, pathways, collect(DISTINCT {id: n.tf_id, family: f.name}) as tfDetails
+      OPTIONAL MATCH (n)-[:HAS_GO_TERM]->(g:GOTerm)
+      WITH n, pathways, tfDetails, collect(DISTINCT {id: g.id, name: g.name, domain: g.domain}) as gos
+      OPTIONAL MATCH (n)-[:HAS_MAPMAN]->(m:MapMan)
+      OPTIONAL MATCH path=(m)-[:SUBCATEGORY_OF*0..]->(root:MapMan)
+      WHERE NOT (root)-[:SUBCATEGORY_OF]->()
+      WITH n, pathways, tfDetails, gos,
+           collect(DISTINCT [node in nodes(path) | {bincode: node.bincode, name: node.name}]) as mapmanPaths
+      OPTIONAL MATCH (n)-[:HAS_UNIPROT]->(u:Uniprot)
+      WITH n, pathways, tfDetails, gos, mapmanPaths,
+           collect(DISTINCT {entry: u.entry, entry_name: u.entry_name, gene_names: u.gene_names, protein_names: u.protein_names, reviewed: u.reviewed}) as uniprotNodes
       OPTIONAL MATCH (n)-[:HAS_MOTIF]->(m:Motif)
-      WITH n, pathways, ontologies, collect(DISTINCT {id: m.id, source: m.source}) as motifs
-      OPTIONAL MATCH (n)-[:IN_TF_FAMILY]->(tf:TranscriptionFactorFamily)
-      WITH n, pathways, ontologies, motifs, collect(DISTINCT tf.name) as tf_families
+      WITH n, pathways, tfDetails, gos, mapmanPaths, uniprotNodes,
+           collect(DISTINCT {id: m.id, source: m.source}) as motifs
       OPTIONAL MATCH (n)-[:BELONGS_TO_CLUSTER]->(c:Cluster)
-      WITH n, pathways, ontologies, motifs, tf_families, collect(DISTINCT c.name) as clusters
-      RETURN n.id as id,
-             n.symbol as symbol,
-             n.msu_id as msu_id,
-             n.identifier as identifier,
-             n.deg as deg,
-             n.type as type,
-             n.description as description,
-             pathways,
-             ontologies,
-             motifs,
-             tf_families,
-             clusters
+      WITH n, pathways, tfDetails, gos, mapmanPaths, uniprotNodes, motifs,
+           collect(DISTINCT c.name) as clusters
+      RETURN {
+        id: n.id,
+        symbol: n.symbol,
+        msu_id: n.msu_id,
+        identifier: n.identifier,
+        deg: n.deg,
+        type: n.type,
+        full_name: n.full_name,
+        description: n.full_name,
+        kegg_gene: n.kegg_gene,
+        keggDetail: [k in pathways WHERE k.code IS NOT NULL],
+        pathways: [k in pathways WHERE k.code IS NOT NULL],
+        tfDetail: [tf in tfDetails WHERE tf.id IS NOT NULL OR tf.family IS NOT NULL],
+        tf_families: [tf in tfDetails WHERE tf.family IS NOT NULL | tf.family],
+        attributes: { GO: [g in gos WHERE g.id IS NOT NULL] },
+        ontologies: [g in gos WHERE g.id IS NOT NULL | { id: g.id, name: g.name }],
+        mapmanPaths: mapmanPaths,
+        uniprotDetail: [u in uniprotNodes WHERE u.entry IS NOT NULL],
+        motifs: [m in motifs WHERE m.id IS NOT NULL],
+        clusters: clusters
+      } as metadata
       `,
       { nodeId }
     );
@@ -378,21 +398,7 @@ app.get("/api/network/node/:id", async (req, res) => {
       return res.status(404).json({ error: "Gene not found." });
     }
 
-    const r = result.records[0];
-    res.json({
-      id: r.get("id"),
-      symbol: r.get("symbol"),
-      msu_id: r.get("msu_id"),
-      identifier: r.get("identifier"),
-      deg: r.get("deg"),
-      type: r.get("type"),
-      description: r.get("description"),
-      pathways: r.get("pathways"),
-      ontologies: r.get("ontologies"),
-      motifs: r.get("motifs"),
-      tf_families: r.get("tf_families"),
-      clusters: r.get("clusters"),
-    });
+    res.json(result.records[0].get("metadata"));
   } catch (error) {
     console.error("Node detail error:", error);
     res.status(500).json({ error: "Failed to retrieve node details." });
