@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Rice2Net Homepage</title>
+    <link rel="stylesheet" href="homepage_styles.css">
+</head>
+<body>
+    <div class="homepage-wrapper">
+
+    <div class="hero-section">
+        <!-- This remains the background/main image -->
+        <img src="figures/network.png" alt="Rice2Net Network Architecture" class="hero-bg-image">
+
+        <!-- New container to hold logo and button side-by-side -->
+        <div class="hero-content-wrapper">
+            <img src="figures/rice2net_logo2.png" alt="Rice2Net Logo" class="hero-logo">
+
+            <a href="index.html" class="main-title-btn">
+                <span class="subtitle">Go to App</span>
+            </a>
+        </div>
+    </div>
+
+        <div class="readme-content">
+
+            <h2>About Rice2Net</h2>
+            <p>Rice2Net is a webtool for the visualization, exploration, and analysis of the rice (<em>Oryza sativa</em>) gene regulatory network (GRN) and coexpression data. The tool interfaces with a Neo4j graph database to render topological data into a force-directed graph. Users filter subnetworks, manipulate node visibility, adjust layout parameters, and cross-reference genes with functional annotations.</p>
+
+            <h2>Usage</h2>
+            <p>Rice2Net provides a canvas paired with a control panel. By default, the application loads a topological overview of the database. Users navigate the canvas using Pan and Select modes located in the toolbar, and interact with nodes to view metadata. The functionalities are divided into the following sections:</p>
+
+            <details>
+                <summary>Target Explorer</summary>
+                <p>The <strong>Target Explorer</strong> allows users to isolate subnetworks based on a list of genes.</p>
+                <ul>
+                    <li><strong>Target Input:</strong> Users input locus identifiers (RAP or MSU format) manually or via a <code>.txt</code> file upload.</li>
+                    <li><strong>Search Depth:</strong> Determines how many topological steps (edges) away from the target genes the network traverses to pull in neighboring nodes.</li>
+                    <li><strong>Prune Dead Ends:</strong> A toggle that removes "leaf" nodes (nodes with a degree of 1) from the filtered subnetwork, retaining the interconnected graph.</li>
+                    <li><strong>Connect Neighbors:</strong> This toggle dictates graph traversal logic during subnetwork filtering. When enabled, the filter identifies and draws edges between nodes in the target subset and their retrieved neighbors. When disabled, the filter draws edges radiating from the initial target nodes, resulting in a radial topology. This logic applies to graph manipulation: when enabled during node expansion, the system draws edges between introduced nodes and existing nodes on the canvas. When disabled, introduced nodes connect exclusively to the expanded parent node.</li>
+                    <li><strong>Graph Manipulation:</strong> While in "Select" mode, right-clicking a node reveals manipulation options:
+                        <ul>
+                            <li><strong>Expand:</strong> Fetches and renders database neighbors of a leaf node.</li>
+                            <li><strong>Contract:</strong> Removes leaf nodes attached to the selected node.</li>
+                            <li><strong>Pop:</strong> Deletes the selected node from the visualization.</li>
+                        </ul>
+                    </li>
+                </ul>
+            </details>
+
+            <details>
+                <summary>Layout</summary>
+                <p>The <strong>Layout</strong> panel provides control over the rendering and the D3.js force simulation engine.</p>
+                <ul>
+                    <li><strong>Visual Settings:</strong> Controls for toggling Light/Dark themes, base node size, degree-based node scaling (sizes nodes based on edge count), edge width, and edge opacity.</li>
+                    <li><strong>Physics Settings:</strong> Modifiers for the graph algorithm. Users adjust Link Length (spring distance), Repulsion (charge force between nodes), Collision Radius (prevents node overlap), and Compression (radial force pulling nodes toward the canvas center).</li>
+                    <li><strong>Recalculate Layout:</strong> Reignites the physics simulation to untangle topological structures after filtering or manipulation.</li>
+                </ul>
+            </details>
+
+            <details>
+                <summary>Export</summary>
+                <p>The <strong>Export</strong> suite allows users to extract visualizations and tabular data.</p>
+                <ul>
+                    <li><strong>Locus ID Format:</strong> A toggle that defines whether exported data files prioritize RAP-DB or MSU formatting for gene identifiers.</li>
+                    <li><strong>Export Image (.png):</strong> Generates a snapshot of the canvas. A "Show all edges" toggle forces the renderer to paint edges connected to transparent (hidden) nodes.</li>
+                    <li><strong>Export Edges (.tsv):</strong> Downloads visible topological links, including source/target mapping, edge weights, IRP scores, and directionality flags.</li>
+                    <li><strong>Export Layout (.json):</strong> Saves spatial coordinates (<code>x</code>, <code>y</code>), visibility states, and metadata of the canvas, allowing the user to import and restore the visualization.</li>
+                    <li><strong>Export Genes (.tsv):</strong> Downloads a tabular list of visible genes along with flattened metadata columns (Symbol, Transcription Factor families, mapped pathways).</li>
+                </ul>
+            </details>
+
+            <details>
+                <summary>Import</summary>
+                <p>The <strong>Import</strong> section allows users to load networks or restore saved application states, overriding the Neo4j database connection.</p>
+                <ul>
+                    <li><strong>Load Layout JSON:</strong> Restores a network exported via the "Export Layout (.json)" function. This restores spatial positioning without recalculating the physics engine.</li>
+                    <li><strong>Load Edges TSV:</strong> Accepts a <code>.tsv</code>, <code>.csv</code>, or <code>.txt</code> file containing Source and Target columns (with Weights). The application builds the topology, queries the database for metadata, and calculates a physics layout.</li>
+                    <li><strong>Revert to Database:</strong> An active import displays its filename in the panel alongside an "✕" button. Clicking this button clears the imported data and restores the network from the database.</li>
+                </ul>
+            </details>
+
+            <h2>Data</h2>
+            <details>
+                <summary>Annotation Sources</summary>
+                <p>Rice2Net aggregates annotations and sequence identifiers from databases to provide context for each node. The following annotation sources are integrated into the database:</p>
+                <ul>
+                    <li><strong>Gene Identifiers:</strong> Primary cross-referencing utilizes <strong>RAP-DB</strong> (Rice Annotation Project) and <strong>MSU</strong> (Michigan State University) locus IDs, alongside gene symbols and GenBank identifiers.</li>
+                    <li><strong>Gene Ontology (GO):</strong> Functional classification terms (Biological Process, Molecular Function, Cellular Component) mapped to EBI QuickGO URLs.</li>
+                    <li><strong>MapMan:</strong> Ontology bin codes detailing metabolic pathways and cellular processes.</li>
+                    <li><strong>KEGG:</strong> (Kyoto Encyclopedia of Genes and Genomes) Mapped pathway codes and network descriptions.</li>
+                    <li><strong>UniProt:</strong> Cross-referenced protein database entries containing reviewed status, protein names, and alias mapping.</li>
+                    <li><strong>Transcription Factor (TF) Databases:</strong> TF families are assigned using <strong>PlantTFDB</strong> (for TFs) and <strong>iTAK v1.8</strong> (for Predicted TFs and Predicted TRs).</li>
+                </ul>
+            </details>
+
+            <details>
+                <summary>Coexpression</summary>
+                <p>The dataset comprises 1402 samples from photosynthetic tissues. Treatments include abiotic stress, physiological conditions, chemical applications, biotic stress, and genetic modifications. Genetic modifications involve mutations influencing chloroplast development.</p>
+                <p style="text-align: center;">
+                  <img src="figures/dataset_comp.png" alt="Overview of the transcriptomic dataset composition across 1402 curated samples." style="width: 70%;">
+                </p>
+                <p>The reference transcriptome and proteome for Oryza sativa subsp. japonica (genome assembly IRGSP-1.0) were used. Data was sourced from the following NCBI SRA BioProjects: PRJNA1219119, PRJNA609211, PRJNA1255502, PRJNA575016, PRJNA1073311, PRJNA753062, PRJNA890021, PRJNA917024, PRJNA1020267, PRJNA1293730, PRJNA933387, PRJNA350792, PRJNA1174730, PRJNA1198503, PRJNA1068025, PRJNA358135, PRJNA716196, PRJNA532802, PRJNA603205, PRJNA1120955, PRJNA1229755, PRJNA1148223, PRJNA1067293, PRJNA1234113, PRJNA1234517, PRJNA730675, PRJEB64872, PRJNA1036792, PRJNA1121593, PRJNA751936, PRJNA1011474, PRJNA802358, PRJNA894465, PRJNA1019094, PRJNA741871, PRJNA430015, PRJNA601442, PRJNA450806, PRJNA811347, PRJNA1141930, PRJNA1260801, PRJNA1067651, PRJNA790476, PRJNA767196, PRJNA386172, PRJNA609653, PRJNA631179, PRJNA1010774, PRJNA408068, and PRJNA560146.</p>
+                <p>RNA-seq data processing was executed using a standard pipeline. Read trimming and quality filtering were performed applying a sliding window size of 4 and a mean quality threshold of 20. Transcript quantification was carried out with 100 bootstrap samples, and quality control metrics were aggregated. BioProjects exhibiting a mean sample alignment rate below 60% were excluded. Transcript abundances were aggregated into gene counts, and data was normalized to generate Variance Stabilizing Transformation (VST) matrices. Prior to network inference, genes were filtered to retain those maintaining a minimum count of 10 in at least 10% of the dataset, with a cross-dataset variance of ≥ 0.5.</p>
+                <p>The expression matrix was subjected to GRN reconstruction using the Seidr toolkit. An ensemble of six inference algorithms was applied: Pearson correlation, Spearman rank correlation, Partial correlation (PCOR), Random Forests (GENIE3), Context Likelihood of Relatedness (CLR), and Algorithm for the Reconstruction of Accurate Cellular Networks (ARACNE). Seidr's Inverse Rank Product (IRP) method was used to aggregate the networks generated by each algorithm into a consensus network. This consensus network was pruned using Seidr's backbone function with a Z-score threshold of 1.28 to extract the network topology.</p>
+            </details>
+
+            <details>
+                <summary>Network Performance</summary>
+                <p>The global network was evaluated against functional annotations. The distribution of macro-averaged AUROC metrics yielded a mean of 0.6429 across 1,786 Gene Ontology (GO) terms and a mean of 0.6866 across 780 MapMan bins. Network saturation analysis evaluated the macro-averaged AUROC across dataset subsets of varying BioProject counts. The macro-averaged AUROC reached a performance plateau at 20 BioProjects for GO and MapMan annotations.</p>
+                <p style="text-align: center;">
+                  <img src="figures/violin_half.png" alt="Distributional variance of macro-averaged AUROC" style="width: 49%;">
+                  <img src="figures/sat_auroc.png" alt="Network performance saturation analysis." style="width: 49%;">
+                </p>
+            </details>
+
+            <details>
+                <summary>TF-Promoter Binding</summary>
+                <p>Motif references used in TF-Promoter Binding are sourced from <strong>PlantTFDB</strong>, <strong>JASPAR Core</strong>, <strong>JASPAR Unvalidated</strong>, and <strong>CIS-BP</strong>. Rice and homologous TF binding motifs from PlantTFDB, JASPAR, and CIS-BP were obtained. Motifs were associated with loci non-exclusively. Gene promoters (2000 bp upstream of start codon) were extracted using <strong>bedtools</strong>. Promoters were scanned for cis-binding sites using <strong>FIMO</strong> (MEME Suite). This identified regulator-regulated gene pairs within GRNs.</p>
+            </details>
+
+            <details>
+                <summary>Functional Clusters</summary>
+                <p>Community detection within networks was performed using Python <strong>Infomap</strong>. Modules were functionally annotated using <strong>g:GOSt</strong> (<strong>g:Profiler</strong>).</p>
+            </details>
+
+            <h2>Team</h2>
+            <ul>
+                <li><strong>Manuel Almeida</strong> (Lead Developer): manuel.p.almeida13@gmail.com</li>
+                <li><strong>Henrique Niza, Msc</strong> (Backend & Security Developer): henrique.niza@itqb.unl.pt</li>
+                <li><strong>Pedro Barros, Ph.D.</strong> (Thesis Supervisor): pbarros@itqb.unl.pt</li>
+                <li><strong>Tiago Lourenço, Ph.D.</strong> (Thesis Co-Supervisor): tsantos@itqb.unl.pt</li>
+                <li><strong>M. Margarida Oliveira, Ph.D.</strong> (Lab Director): mmolive@itqb.unl.pt</li>
+            </ul>
+            <p>Source code available at: <a href="https://github.com/m13paiva/Rice2Net" target="_blank" rel="noopener noreferrer">https://github.com/m13paiva/Rice2Net</a></p>
+
+            <h2>Acknowledgements & Funding</h2>
+            <h3>Acknowledgements</h3>
+            <p>We acknowledge the GPlantS lab at ITQB for their support throughout this project, and the Master in Computational Biology and Bioinformatics program from NOVA FCT.</p>
+
+            <h3>Funding</h3>
+            <p>This work was supported by FCT - Fundação para a Ciência e a Tecnologia, I.P., through:</p>
+            <ul>
+                <li>Rice2B project (2022.02916.PTDC, DOI: 10.54499/2022.02916.PTDC)</li>
+                <li>Green-it Bioresources for Sustainability R&D Unit (UID/04551/2025, DOI: 10.54499/UID/04551/2025; UID/PRR/04551/2025, DOI: 10.54499/UID/PRR/04551/2025)</li>
+                <li>LS4FUTURE Associated Laboratory (LA/P/0087/2020, DOI: 10.54499/LA/P/0087/2020)</li>
+            </ul>
+        </div>
+
+        <footer>
+            <img src="figures/fct_logo.png" alt="FCT Logo">
+            <img src="figures/gplants_logo.png" alt="GPlantS Logo">
+            <img src="figures/itqb_logo.png" alt="ITQB Logo">
+            <img src="figures/fct_nova_logo.png" alt="FCT NOVA Logo">
+        </footer>
+
+    </div>
+</body>
+</html>

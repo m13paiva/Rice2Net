@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Rice2Net</title>
+        <script src="https://d3js.org/d3.v7.min.js"></script>
+        <link rel="stylesheet" href="style.css" />
+        <script>
+            function enterApp() {
+                const overlay = document.getElementById('homepage-overlay');
+                if (overlay) overlay.style.display = 'none';
+            }
+
+            function showHomepage() {
+                const overlay = document.getElementById('homepage-overlay');
+                if (overlay) {
+                    overlay.style.display = 'block';
+                } else {
+                    fetch('homepage.html')
+                        .then(response => {
+                            if (!response.ok) throw new Error("Could not find homepage.html");
+                            return response.text();
+                        })
+                        .then(html => {
+                            const overlayDiv = document.createElement('div');
+                            overlayDiv.id = 'homepage-overlay';
+                            overlayDiv.style.position = 'absolute';
+                            overlayDiv.style.top = '0';
+                            overlayDiv.style.left = '0';
+                            overlayDiv.style.width = '100%';
+                            overlayDiv.style.height = '100%';
+                            overlayDiv.style.zIndex = '9999';
+                            overlayDiv.style.backgroundColor = '#ffffff';
+                            overlayDiv.style.overflowY = 'auto';
+                            overlayDiv.style.display = 'block';
+                            overlayDiv.innerHTML = html;
+
+                            // Hijacking the button from your injected HTML so it actually works
+                            const goBtn = overlayDiv.querySelector('.main-title-btn');
+                            if (goBtn) {
+                                goBtn.onclick = function(e) {
+                                    e.preventDefault();
+                                    enterApp();
+                                };
+                            }
+
+                            document.body.appendChild(overlayDiv);
+                        })
+                        .catch(err => console.error(err));
+                }
+            }
+
+            document.addEventListener("DOMContentLoaded", () => {
+                showHomepage();
+            });
+        </script>
+    </head>
+    <body class="mode-pan">
+        <div id="container">
+            <canvas id="network-canvas"></canvas>
+
+            <div id="toolbar">
+                <button
+                    id="tool-pan"
+                    class="tool-btn active"
+                    title="Pan Mode"
+                    onclick="setMode('pan')"
+                >
+                    <svg viewBox="0 0 24 24">
+                        <path
+                            fill="currentColor"
+                            d="M23 5.5V20c0 2.2-1.8 4-4 4h-7.3c-1.08 0-2.1-.43-2.85-1.19L1 14.83s1.26-1.23 1.3-1.25c.22-.19.49-.29.79-.29.22 0 .42.06.6.16l2.31 1.3V5.5c0-.83.67-1.5 1.5-1.5S9 4.67 9 5.5v4.95c.13-.05.26-.07.4-.07.55 0 1 .45 1 1v-6.95c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5v6.95c.13-.05.26-.07.4-.07.55 0 1 .45 1 1v-6.95c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5v6.95c.13-.05.26-.07.4-.07.55 0 1 .45 1 1V5.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5z"
+                        />
+                    </svg>
+                </button>
+                <button
+                    id="tool-select"
+                    class="tool-btn"
+                    title="Select Mode"
+                    onclick="setMode('select')"
+                >
+                    <svg viewBox="0 0 24 24">
+                        <path
+                            fill="currentColor"
+                            d="M7 2l12 11.2-5.8.5 3.3 7.3-2.2.9-3.2-7.4-4.4 4.6V2z"
+                        />
+                    </svg>
+                </button>
+                <div class="tool-divider"></div>
+                <button
+                    id="tool-fit"
+                    class="tool-btn"
+                    title="Auto-Fit View"
+                    onclick="autoFit()"
+                >
+                    <svg viewBox="0 0 24 24">
+                        <path
+                            fill="currentColor"
+                            d="M5 5h5v2H7v3H5V5zm10 0h5v5h-2V7h-3V5zm0 14h3v-3h2v5h-5v-2zM5 19v-3h2v3h3v2H5v-2z"
+                        />
+                    </svg>
+                </button>
+            </div>
+            <div id="detail-overlay" onclick="closeDetails()"></div>
+
+            <div id="detail-box">
+                <button id="detail-close" onclick="closeDetails()">
+                    ✕ Close
+                </button>
+                <div id="detail-header">
+                    <div class="detail-title" id="d-id">Gene Name</div>
+                </div>
+                <div
+                    id="detail-content"
+                    style="
+                        overflow-y: auto;
+                        max-height: 80%;
+                        padding-right: 10px;
+                    "
+                ></div>
+            </div>
+        </div>
+
+        <div id="loader">
+            <div class="spinner"></div>
+            <div id="loader-text">INITIALIZING...</div>
+            <div id="progress-container"><div id="progress-bar"></div></div>
+        </div>
+
+        <div id="stats" class="floating-panel">
+            <div class="stat-row">
+                <span class="stat-val" id="val-nodes">-</span> Genes
+            </div>
+            <div class="stat-row">
+                <span class="stat-val" id="val-edges">-</span> Edges
+            </div>
+        </div>
+
+        <div id="legend" class="floating-panel">
+            <div class="legend-item">
+                Transcription Factor
+                <div
+                    class="shape-diamond"
+                    style="background-color: #ff0000"
+                ></div>
+            </div>
+            <div class="legend-item" id="legend-target" style="display: none">
+                Target Gene
+                <div
+                    class="shape-circle"
+                    style="background-color: #32cd32"
+                ></div>
+            </div>
+            <div class="legend-item">
+                Other Gene
+                <div
+                    class="shape-circle"
+                    style="background-color: #00ffff"
+                ></div>
+            </div>
+        </div>
+
+        <div id="tooltip"></div>
+
+        <div id="context-menu" style="display:none; position:absolute; z-index:10001; background:rgba(20,20,20,0.95); border:1px solid #444; border-radius:4px; padding:4px; box-shadow:0 4px 6px rgba(0,0,0,0.5); min-width: 120px;">
+            <div id="cm-expand" class="cm-item" style="padding:8px 12px; cursor:pointer; color:#eee; font-size:0.9rem; border-bottom:1px solid #333;" onclick="handleContextMenuClick('expand')">Expand</div>
+            <div id="cm-contract" class="cm-item" style="padding:8px 12px; cursor:pointer; color:#eee; font-size:0.9rem; border-bottom:1px solid #333;" onclick="handleContextMenuClick('contract')">Contract</div>
+            <div id="cm-pop" class="cm-item" style="padding:8px 12px; cursor:pointer; color:#eee; font-size:0.9rem;" onclick="handleContextMenuClick('pop')">Pop</div>
+        </div>
+        <style>
+            .cm-item:hover { background-color: #4db8ff !important; color: #000 !important; }
+        </style>
+
+        <div id="sidebar" style="display: flex; flex-direction: column;">
+            <div>
+                <h3
+                    style="
+                        margin-top: 0;
+                        border-bottom: 1px solid #444;
+                        padding-bottom: 15px;
+                        margin-bottom: 20px;
+                    "
+                >
+                    Control Panel
+                </h3>
+
+                <details open>
+                    <summary>Target Explorer</summary>
+                    <div style="margin-bottom: 15px">
+                        <label
+                            style="
+                                font-size: 0.85rem;
+                                font-weight: 600;
+                                color: #ccc;
+                                margin-bottom: 5px;
+                                display: block;
+                            "
+                            >Target Genes (One per line)</label
+                        >
+                        <textarea
+                            id="target-input"
+                            placeholder="GeneA&#10;GeneB&#10;GeneC"
+                        ></textarea>
+                        <input
+                            type="file"
+                            id="target-file"
+                            accept=".txt"
+                            onchange="loadTargetFile(this)"
+                        />
+                    </div>
+
+                    <div class="control-group">
+                        <label>Search Depth</label>
+                        <input
+                            type="number"
+                            id="target-depth"
+                            value="1"
+                            min="0"
+                            step="1"
+                        />
+                    </div>
+
+                    <div class="checkbox-row">
+                        <label for="target-cross-edges" style="cursor: pointer"
+                            >Connect Neighbors</label
+                        >
+                        <label class="switch">
+                            <input
+                                type="checkbox"
+                                id="target-cross-edges"
+                                checked
+                            />
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="checkbox-row">
+                        <label for="target-prune" style="cursor: pointer"
+                            >Prune Dead Ends (Leaves)</label
+                        >
+                        <label class="switch">
+                            <input type="checkbox" id="target-prune" />
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 8px">
+                        <button class="btn btn-action" onclick="runFilter()">
+                            Filter Subnetwork
+                        </button>
+                        <button class="btn btn-clear" onclick="clearTargets()">
+                            Clear Targets
+                        </button>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>Layout</summary>
+                    <details>
+                        <summary>Visual Settings</summary>
+                        <div class="theme-toggle-row">
+                            <label
+                                class="theme-label"
+                                style="
+                                    font-size: 0.85rem;
+                                    font-weight: 600;
+                                    cursor: pointer;
+                                "
+                                onclick="
+                                    document.getElementById('theme-check').click()
+                                "
+                                >Light Mode</label
+                            >
+                            <label class="switch"
+                                ><input
+                                    type="checkbox"
+                                    id="theme-check"
+                                    onchange="toggleTheme(this.checked)" /><span
+                                    class="slider"
+                                ></span
+                            ></label>
+                        </div>
+                        <div class="control-group">
+                            <label>Node Base Size</label
+                            ><input
+                                type="range"
+                                id="viz-base-size"
+                                min="0.5"
+                                max="8"
+                                step="0.5"
+                            />
+                        </div>
+                        <div class="control-group">
+                            <label>Node Scale (Degree)</label
+                            ><input
+                                type="range"
+                                id="viz-size-mult"
+                                min="0"
+                                max="5"
+                                step="0.1"
+                            />
+                        </div>
+                        <div class="control-group">
+                            <label>Edge Width</label
+                            ><input
+                                type="range"
+                                id="viz-edge-width"
+                                min="0.1"
+                                max="3"
+                                step="0.1"
+                            />
+                        </div>
+                        <div class="control-group">
+                            <label>Edge Opacity</label
+                            ><input
+                                type="range"
+                                id="viz-edge-alpha"
+                                min="0.05"
+                                max="1"
+                                step="0.05"
+                            />
+                        </div>
+                    </details>
+                    <details>
+                        <summary>Physics Settings</summary>
+                        <div class="control-group">
+                            <label>Link Length</label
+                            ><input
+                                type="range"
+                                id="phys-link-dist"
+                                min="0"
+                                max="100"
+                                step="1"
+                            />
+                        </div>
+                        <div class="control-group">
+                            <label>Repulsion (Force)</label
+                            ><input
+                                type="range"
+                                id="phys-repulsion"
+                                min="0"
+                                max="1000"
+                                step="10"
+                            />
+                        </div>
+                        <div class="control-group">
+                            <label>Collision Radius</label
+                            ><input
+                                type="range"
+                                id="phys-collision"
+                                min="0.1"
+                                max="2.0"
+                                step="0.1"
+                            />
+                        </div>
+                        <div class="control-group">
+                            <label>Compression</label
+                            ><input
+                                type="range"
+                                id="phys-radial"
+                                min="0"
+                                max="1.0"
+                                step="0.05"
+                            />
+                        </div>
+                    </details>
+                    <div style="margin-top: 20px">
+                        <button
+                            id="btn-recalc"
+                            class="btn btn-recalc"
+                            onclick="recalculateStatic()"
+                        >
+                            Recalculate Layout
+                        </button>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>Export</summary>
+                    <div
+                        style="
+                            margin-top: 10px;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 8px;
+                        "
+                    >
+                        <div class="checkbox-row" style="margin-bottom: 5px;">
+                            <label for="export-id-mode" style="cursor: pointer">Locus ID format (<span id="export-id-mode-label">RAP IDs</span>)</label>
+                            <label class="switch">
+                                <input type="checkbox" id="export-id-mode" />
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+
+                        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px;">
+                            <button class="btn btn-export" onclick="exportPNG()" style="flex: 1; margin: 0;">Export Image (.png)</button>
+                            <div class="checkbox-row" style="margin: 0; min-width: max-content;">
+                                <label for="export-force-edges" style="cursor: pointer; font-size: 0.8rem; padding-right: 5px;">Show all edges</label>
+                                <label class="switch">
+                                    <input type="checkbox" id="export-force-edges" />
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <button class="btn btn-export" onclick="exportTSV()">
+                            Export Edges (.tsv)
+                        </button>
+                        <button class="btn btn-export" onclick="exportJSON()">
+                            Export Layout (.json)
+                        </button>
+                        <button class="btn btn-export" onclick="exportGenesTSV()">
+                            Export Genes (.tsv)
+                        </button>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>Import</summary>
+                    <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 10px;">
+                        <div>
+                            <label style="font-size: 0.8rem; color: #bbb">Load JSON (Saved Layout)</label>
+                            <div style="display: flex; gap: 8px; margin-top: 5px;">
+                                <button class="btn btn-export" onclick="document.getElementById('import-json-file').click()" style="flex: 1; margin: 0;">Import Layout JSON</button>
+                                <input type="file" id="import-json-file" accept=".json" onchange="importJSON(this)" style="display: none;" />
+                            </div>
+                            <div id="import-json-info" style="display: none; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 0.85rem; color: #eee; background: rgba(0,0,0,0.2); padding: 6px 10px; border-radius: 4px; border: 1px solid #444;">
+                                <span id="import-json-name" style="font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                                <span onclick="location.reload()" style="cursor: pointer; color: #d9534f; font-weight: bold; font-size: 1rem; padding-left: 10px;" title="Revert to DB Network">✕</span>
+                            </div>
+                        </div>
+                        <div style="border-top: 1px solid #444; padding-top: 10px">
+                            <label style="font-size: 0.8rem; color: #bbb">Load Edges (Recalculate)</label>
+                            <div style="display: flex; gap: 8px; margin-top: 5px;">
+                                <button class="btn btn-export" onclick="document.getElementById('import-edges-file').click()" style="flex: 1; margin: 0;">Import Edges TSV</button>
+                                <input type="file" id="import-edges-file" accept=".txt,.tsv,.csv" onchange="importEdges(this)" style="display: none;" />
+                            </div>
+                            <div id="import-edges-info" style="display: none; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 0.85rem; color: #eee; background: rgba(0,0,0,0.2); padding: 6px 10px; border-radius: 4px; border: 1px solid #444;">
+                                <span id="import-edges-name" style="font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                                <span onclick="location.reload()" style="cursor: pointer; color: #d9534f; font-weight: bold; font-size: 1rem; padding-left: 10px;" title="Revert to DB Network">✕</span>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+            </div>
+
+            <div style="margin-top: auto; border-top: 1px solid #444; padding-top: 15px; text-align: center;">
+                <button class="btn" style="width: 100%; background: #333; color: #ccc;" onclick="showHomepage()">About Rice2Net</button>
+            </div>
+        </div>
+
+        <script src="app/globals.js" defer></script>
+        <script src="app/core.js" defer></script>
+        <script src="app/data.js" defer></script>
+        <script src="app/sim.js" defer></script>
+        <script src="app/filter.js" defer></script>
+        <script src="app/kegg.js" defer></script>
+        <script src="app/controls.js" defer></script>
+        <script src="app/legends.js" defer></script>
+        <script src="app/graph.js" defer></script>
+        <script src="app/interactions.js" defer></script>
+        <script src="app/exporters.js" defer></script>
+        <script src="app/ui.js" defer></script>
+    </body>
+</html>
