@@ -1,6 +1,6 @@
 <div align="justify">
 
-# Rice2Net
+<img src="figures/rice2net_logo_w_background.png" alt="Rice2Net Logo" width="100%"/>
 
 ## About Rice2Net
 
