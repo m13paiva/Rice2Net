@@ -1,33 +1,115 @@
 /**
  * server.js - Express Middleware API Server for Neo4j Backend Integration
- * 
- * Provides RESTful API endpoints for streaming initial network topology, fetching
- * regulation edge directions, loading functional gene clusters, querying TF-promoter
- * binding events, and fetching comprehensive node attribute metadata.
+ * Production configuration with Nginx reverse proxy support, Helmet, CORS, and Rate Limiting.
  */
 
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const neo4j = require("neo4j-driver");
 
 const app = express();
-app.use(cors());
-app.use(express.json({ limit: "200mb" }));
-app.use(express.urlencoded({ limit: "200mb", extended: true }));
+const PORT = process.env.PORT || 3000;
 
-/** Initialize Neo4j Driver Connection */
-const driver = neo4j.driver(
-  process.env.NEO4J_URI,
-  neo4j.auth.basic(process.env.NEO4J_USER, process.env.NEO4J_PASSWORD),
+// 1. Trust Reverse Proxy (Nginx) to accurately retrieve client IP addresses
+app.set("trust proxy", 1);
+
+// 2. Security Headers
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  })
 );
+
+// 3. CORS Policy (Standard HTTP Port 80 and backward compatibility)
+const allowedOrigins = [
+  "http://localhost",
+  "http://127.0.0.1",
+  "http://192.168.64.3",
+  "http://localhost:8000",
+  "http://127.0.0.1:8000",
+  "http://192.168.64.3:8000",
+];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Origin not allowed by CORS policy: ${origin}`));
+    },
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"],
+  })
+);
+
+// 4. Payload Size Limits
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ limit: "2mb", extended: true }));
+
+// 5. Rate Limiting Configuration
+const standardLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute window
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please try again in 1 minute." },
+});
+
+const heavyQueryLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Network loading rate limit exceeded for this IP." },
+});
+
+app.use("/api/", standardLimiter);
+
+// 6. Neo4j Driver Setup
+const driver = neo4j.driver(
+  process.env.NEO4J_URI || "bolt://127.0.0.1:7687",
+  neo4j.auth.basic(
+    process.env.NEO4J_USER || "neo4j",
+    process.env.NEO4J_PASSWORD || "neo4j123"
+  ),
+  {
+    maxConnectionPoolSize: 50,
+    connectionAcquisitionTimeout: 5000,
+  }
+);
+
+// Strict regex identifier validation to prevent Cypher injection
+const isValidIdentifier = (id) => {
+  if (typeof id !== "string") return false;
+  return /^[a-zA-Z0-9_\.\-]{2,64}$/.test(id.trim());
+};
 
 /**
  * GET /api/network/init
- * Streams lightweight master network topology (nodes and coexpression edges) as JSON.
+ * Streams all nodes and baseline interactome edges to avoid memory bottlenecks.
  */
-app.get("/api/network/init", (req, res) => {
-  const session = driver.session();
+app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
+  const session = driver.session({ defaultAccessMode: neo4j.session.READ });
+  let isClosed = false;
+
+  const cleanup = async () => {
+    if (!isClosed) {
+      isClosed = true;
+      try {
+        await session.close();
+      } catch (err) {
+        console.error("Error closing Neo4j session:", err);
+      }
+    }
+  };
+
+  req.on("close", cleanup);
+
   res.setHeader("Content-Type", "application/json");
   res.write('{"nodes":[');
 
@@ -35,12 +117,13 @@ app.get("/api/network/init", (req, res) => {
   session
     .run(
       `
-    MATCH (n:Gene)
-    RETURN n.id as id, n.x as x, n.y as y, n.deg as deg, n.type as type, n.symbol as symbol, n.msu_id as msu_id, n.identifier as identifier
-  `,
+      MATCH (n:Gene)
+      RETURN n.id as id, n.x as x, n.y as y, n.deg as deg, n.type as type, n.symbol as symbol, n.msu_id as msu_id, n.identifier as identifier
+      `
     )
     .subscribe({
       onNext: (record) => {
+        if (isClosed) return;
         if (!isFirstNode) res.write(",");
         res.write(
           JSON.stringify({
@@ -53,19 +136,24 @@ app.get("/api/network/init", (req, res) => {
             msu_id: record.get("msu_id"),
             identifier: record.get("identifier"),
             isRogue: record.get("x") === null,
-          }),
+          })
         );
         isFirstNode = false;
       },
       onCompleted: () => {
+        if (isClosed) return;
         res.write('],"edges":[');
         let isFirstEdge = true;
         session
           .run(
-            "MATCH (s:Gene)-[r:INTERACTS_WITH]->(t:Gene) RETURN s.id as s, t.id as t, r.weight as w, r.irp as irp",
+            `
+            MATCH (s:Gene)-[r:INTERACTS_WITH]->(t:Gene)
+            RETURN s.id as s, t.id as t, r.weight as w, r.irp as irp
+            `
           )
           .subscribe({
             onNext: (record) => {
+              if (isClosed) return;
               if (!isFirstEdge) res.write(",");
               res.write(
                 JSON.stringify({
@@ -75,42 +163,54 @@ app.get("/api/network/init", (req, res) => {
                   has_regulates: false,
                   weight: record.get("w"),
                   irp: record.get("irp"),
-                }),
+                })
               );
               isFirstEdge = false;
             },
-            onCompleted: () => {
-              res.write("]}");
-              res.end();
-              session.close();
+            onCompleted: async () => {
+              if (!isClosed) {
+                res.write("]}");
+                res.end();
+              }
+              await cleanup();
             },
-            onError: (err) => {
+            onError: async (err) => {
               console.error("Edge Stream Error:", err);
-              res.end();
-              session.close();
+              if (!res.headersSent) res.status(500).json({ error: "Edge streaming failed." });
+              else res.end();
+              await cleanup();
             },
           });
       },
-      onError: (err) => {
+      onError: async (err) => {
         console.error("Node Stream Error:", err);
-        res.end();
-        session.close();
+        if (!res.headersSent) res.status(500).json({ error: "Node streaming failed." });
+        else res.end();
+        await cleanup();
       },
     });
 });
 
 /**
  * POST /api/network/edges/regulates
- * Queries regulation relationship directions (REGULATES) for requested edge pairs.
+ * Queries regulation relationships between gene pairs.
  */
 app.post("/api/network/edges/regulates", async (req, res) => {
   const { pairs } = req.body;
 
-  if (!pairs || !Array.isArray(pairs)) {
-    return res.status(400).json({ error: "Invalid edge pairs list." });
+  if (!pairs || !Array.isArray(pairs) || pairs.length === 0) {
+    return res.status(400).json({ error: "Invalid edge pairs list provided." });
   }
 
-  const session = driver.session();
+  const validPairs = pairs.filter(
+    (p) => p && isValidIdentifier(p.s) && isValidIdentifier(p.t)
+  );
+
+  if (validPairs.length === 0) {
+    return res.status(400).json({ error: "No valid identifier pairs provided." });
+  }
+
+  const session = driver.session({ defaultAccessMode: neo4j.session.READ });
   try {
     const result = await session.run(
       `
@@ -128,19 +228,20 @@ app.post("/api/network/edges/regulates", async (req, res) => {
              pair.t AS original_t,
              directions
       `,
-      { pairs }
+      { pairs: validPairs }
     );
 
-    const edges = result.records.map(r => ({
+    const edges = result.records.map((r) => ({
       original_s: r.get("original_s"),
       original_t: r.get("original_t"),
       directions: r.get("directions"),
-      has_regulates: true
+      has_regulates: true,
     }));
 
     res.json({ edges });
   } catch (error) {
-    res.status(500).json({ error: "Regulation query failed.", details: error.message });
+    console.error("Regulation query error:", error);
+    res.status(500).json({ error: "Failed to query regulation relationships." });
   } finally {
     await session.close();
   }
@@ -148,16 +249,16 @@ app.post("/api/network/edges/regulates", async (req, res) => {
 
 /**
  * GET /api/network/edges/binds
- * Fetches detailed TF-promoter binding motif events for a given source -> target pair.
+ * Fetches motif binding information between source and target genes.
  */
 app.get("/api/network/edges/binds", async (req, res) => {
   const { source, target } = req.query;
 
-  if (!source || !target) {
-    return res.status(400).json({ error: "Source and target required." });
+  if (!source || !target || !isValidIdentifier(source) || !isValidIdentifier(target)) {
+    return res.status(400).json({ error: "Valid source and target identifiers are required." });
   }
 
-  const session = driver.session();
+  const session = driver.session({ defaultAccessMode: neo4j.session.READ });
   try {
     const result = await session.run(
       `
@@ -176,7 +277,7 @@ app.get("/api/network/edges/binds", async (req, res) => {
       { source, target }
     );
 
-    const binds = result.records.map(r => {
+    const binds = result.records.map((r) => {
       const sVal = r.get("start");
       const eVal = r.get("stop");
       const occVal = r.get("occurrence");
@@ -190,13 +291,14 @@ app.get("/api/network/edges/binds", async (req, res) => {
         matched_sequence: r.get("matched_sequence"),
         start: sVal !== null ? (sVal.toNumber ? sVal.toNumber() : sVal) : null,
         stop: eVal !== null ? (eVal.toNumber ? eVal.toNumber() : eVal) : null,
-        occurrence: occVal !== null ? (occVal.toNumber ? occVal.toNumber() : occVal) : null
+        occurrence: occVal !== null ? (occVal.toNumber ? occVal.toNumber() : occVal) : null,
       };
     });
 
     res.json({ binds });
   } catch (error) {
-    res.status(500).json({ error: "Binds query failed." });
+    console.error("Binds query error:", error);
+    res.status(500).json({ error: "Failed to query motif binding data." });
   } finally {
     await session.close();
   }
@@ -204,25 +306,25 @@ app.get("/api/network/edges/binds", async (req, res) => {
 
 /**
  * GET /api/network/clusters
- * Fetches functional cluster module definitions and assigned gene lists.
+ * Returns functional cluster definitions and assigned genes.
  */
 app.get("/api/network/clusters", async (req, res) => {
-  const session = driver.session();
+  const session = driver.session({ defaultAccessMode: neo4j.session.READ });
   try {
     const result = await session.run(`
       MATCH (c:Cluster)<-[:BELONGS_TO_CLUSTER]-(g:Gene)
       RETURN c.name AS cluster_name, collect(g.id) AS genes
     `);
 
-    const clusters = result.records.map(r => ({
+    const clusters = result.records.map((r) => ({
       name: r.get("cluster_name"),
-      genes: r.get("genes")
+      genes: r.get("genes"),
     }));
 
     res.json({ clusters });
   } catch (error) {
     console.error("Cluster fetch error:", error);
-    res.status(500).json({ error: "Failed to fetch clusters." });
+    res.status(500).json({ error: "Failed to retrieve functional clusters." });
   } finally {
     await session.close();
   }
@@ -230,11 +332,16 @@ app.get("/api/network/clusters", async (req, res) => {
 
 /**
  * GET /api/network/node/:id
- * Fetches comprehensive metadata annotations for a single gene node (GO, KEGG, MapMan, UniProt, TF info).
+ * Fetches comprehensive metadata and biological annotations for a single gene.
  */
 app.get("/api/network/node/:id", async (req, res) => {
-  const session = driver.session();
   const nodeId = req.params.id;
+
+  if (!isValidIdentifier(nodeId)) {
+    return res.status(400).json({ error: "Invalid gene identifier." });
+  }
+
+  const session = driver.session({ defaultAccessMode: neo4j.session.READ });
   try {
     const result = await session.run(
       `
@@ -243,39 +350,57 @@ app.get("/api/network/node/:id", async (req, res) => {
       WITH n LIMIT 1
       OPTIONAL MATCH (n)-[:IN_PATHWAY]->(p:Pathway)
       WITH n, collect(DISTINCT {code: p.id, name: p.name}) as pathways
-      OPTIONAL MATCH (n)-[:BELONGS_TO_FAMILY]->(f:TFFamily)
-      WITH n, pathways, collect(DISTINCT {id: n.tf_id, family: f.name}) as tfDetails
-      OPTIONAL MATCH (n)-[:HAS_GO_TERM]->(g:GOTerm)
-      WITH n, pathways, tfDetails, collect(DISTINCT {id: g.id, name: g.name, domain: g.domain}) as gos
-      OPTIONAL MATCH (n)-[:HAS_MAPMAN]->(m:MapMan)
-      OPTIONAL MATCH path=(m)-[:SUBCATEGORY_OF*0..]->(root:MapMan)
-      WHERE NOT (root)-[:SUBCATEGORY_OF]->()
-      WITH n, pathways, tfDetails, gos,
-           collect(DISTINCT [node in nodes(path) | {bincode: node.bincode, name: node.name}]) as mapmanPaths
-      OPTIONAL MATCH (n)-[:HAS_UNIPROT]->(u:Uniprot)
-      WITH n, pathways, tfDetails, gos, mapmanPaths,
-           collect(DISTINCT {entry: u.entry, entry_name: u.entry_name, gene_names: u.gene_names, protein_names: u.protein_names, reviewed: u.reviewed}) as uniprotNodes
-      RETURN {
-          id: n.id, symbol: n.symbol, msu_id: n.msu_id, identifier: n.identifier, kegg_gene: n.kegg_gene, full_name: n.full_name,
-          keggDetail: pathways, tfDetail: tfDetails, mapmanPaths: mapmanPaths, uniprotDetail: uniprotNodes,
-          attributes: { GO: gos }
-      } as metadata
-    `,
-      { nodeId },
+      OPTIONAL MATCH (n)-[:IN_ONTOLOGY]->(go:GeneOntology)
+      WITH n, pathways, collect(DISTINCT {id: go.id, name: go.name}) as ontologies
+      OPTIONAL MATCH (n)-[:HAS_MOTIF]->(m:Motif)
+      WITH n, pathways, ontologies, collect(DISTINCT {id: m.id, source: m.source}) as motifs
+      OPTIONAL MATCH (n)-[:IN_TF_FAMILY]->(tf:TranscriptionFactorFamily)
+      WITH n, pathways, ontologies, motifs, collect(DISTINCT tf.name) as tf_families
+      OPTIONAL MATCH (n)-[:BELONGS_TO_CLUSTER]->(c:Cluster)
+      WITH n, pathways, ontologies, motifs, tf_families, collect(DISTINCT c.name) as clusters
+      RETURN n.id as id,
+             n.symbol as symbol,
+             n.msu_id as msu_id,
+             n.identifier as identifier,
+             n.deg as deg,
+             n.type as type,
+             n.description as description,
+             pathways,
+             ontologies,
+             motifs,
+             tf_families,
+             clusters
+      `,
+      { nodeId }
     );
 
     if (result.records.length === 0) {
-      console.warn(`Node not found in DB: ${nodeId}`);
-      return res.status(404).json({ error: "Node not found" });
+      return res.status(404).json({ error: "Gene not found." });
     }
-    res.json(result.records[0].get("metadata"));
+
+    const r = result.records[0];
+    res.json({
+      id: r.get("id"),
+      symbol: r.get("symbol"),
+      msu_id: r.get("msu_id"),
+      identifier: r.get("identifier"),
+      deg: r.get("deg"),
+      type: r.get("type"),
+      description: r.get("description"),
+      pathways: r.get("pathways"),
+      ontologies: r.get("ontologies"),
+      motifs: r.get("motifs"),
+      tf_families: r.get("tf_families"),
+      clusters: r.get("clusters"),
+    });
   } catch (error) {
-    console.error("Metadata Error:", error);
-    res.status(500).json({ error: "Metadata fetch failed." });
+    console.error("Node detail error:", error);
+    res.status(500).json({ error: "Failed to retrieve node details." });
   } finally {
     await session.close();
   }
 });
 
-const PORT = 3000;
-app.listen(PORT, () => console.log(`API Middleware running on port ${PORT}.`));
+app.listen(PORT, "127.0.0.1", () => {
+  console.log(`Protected API Middleware running on port ${PORT}.`);
+});

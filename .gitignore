@@ -1,1 +1,16 @@
-*.dump
+# Node dependencies
+node_modules/
+
+# Environment configuration and secrets
+server/.env
+.env
+
+# Logs and runtime artifacts
+logs/
+*.log
+.pm2/
+npm-debug.log*
+
+# Operating System temporary files
+.DS_Store
+Thumbs.db

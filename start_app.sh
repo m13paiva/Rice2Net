@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# --- CONFIGURATION ---
-# Replace these with the actual absolute paths to your directories.
-FRONTEND_DIR="/home/m13paiva/Desktop/Rice2Net"
-BACKEND_DIR="/home/m13paiva/Desktop/Rice2Net/server"
+# Diretoria dinâmica baseada na localização onde o script é executado
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FRONTEND_DIR="$BASE_DIR"
+BACKEND_DIR="$BASE_DIR/server"
 
 echo "Cleaning up any old server instances..."
 pkill -f "node server.js"

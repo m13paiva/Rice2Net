@@ -186,7 +186,7 @@ The data is stored in a Neo4j graph database. As illustrated in `db_structure.pn
 ## Team
 
 * **Manuel Almeida** (Lead Developer): manuel.p.almeida13@gmail.com
-* **Henrique Niza, Ph.D.** (Backend & Security Developer): henrique.niza@itqb.unl.pt
+* **Henrique Niza** (Backend & Security Developer): henrique.niza@itqb.unl.pt
 * **Pedro Barros, Ph.D.** (Thesis Supervisor): pbarros@itqb.unl.pt
 * **Tiago Lourenço, Ph.D.** (Thesis Co-Supervisor): tsantos@itqb.unl.pt
 * **M. Margarida Oliveira, Ph.D.** (Lab Director): mmolive@itqb.unl.pt
