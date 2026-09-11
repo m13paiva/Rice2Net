@@ -201,7 +201,7 @@ window.fetchRegulationEdges = async function () {
       }));
 
       const response = await fetch(
-        "/api/network/edges/regulates",
+        "http://localhost:3000/api/network/edges/regulates",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -266,7 +266,7 @@ async function loadClusters() {
   CLUSTER_STATE.data.clear();
 
   try {
-    const response = await fetch("/api/network/clusters");
+    const response = await fetch("http://localhost:3000/api/network/clusters");
     if (!response.ok) throw new Error("Failed to fetch clusters from API");
 
     const data = await response.json();
@@ -388,7 +388,7 @@ async function main() {
   await new Promise(r => setTimeout(r, 50));
 
   try {
-    const response = await fetch("/api/network/init");
+    const response = await fetch("http://localhost:3000/api/network/init");
     if (!response.ok) throw new Error("API connection failed");
 
     const graphData = await response.json();
