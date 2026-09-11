@@ -318,7 +318,7 @@ window.showEdgeDetails = async function (edge) {
     bindsContainer.innerHTML = `<div style="text-align:center; padding:10px; color:#aaa;">Fetching detailed binding events...</div>`;
 
     try {
-      const response = await fetch(`http://localhost:3000/api/network/edges/binds?source=${encodeURIComponent(reqSource)}&target=${encodeURIComponent(reqTarget)}`);
+      const response = await fetch(`/api/network/edges/binds?source=${encodeURIComponent(reqSource)}&target=${encodeURIComponent(reqTarget)}`);
 
       if (!response.ok) throw new Error("Failed to fetch binds");
       const { binds } = await response.json();
@@ -472,7 +472,7 @@ async function showNodeDetails(node) {
   document.getElementById("tooltip").style.display = "none";
 
   try {
-    const response = await fetch(`http://localhost:3000/api/network/node/${encodeURIComponent(node.id)}`);
+    const response = await fetch(`/api/network/node/${encodeURIComponent(node.id)}`);
     if (response.ok) {
       const dbData = await response.json();
       if (!node.metadata) node.metadata = {};
