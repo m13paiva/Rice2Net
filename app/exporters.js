@@ -289,7 +289,7 @@ window.exportGenesTSV = async function () {
       const batch = exportNodes.slice(i, i + batchSize);
       await Promise.all(batch.map(async (n) => {
         try {
-          const res = await fetch(`http://localhost:3000/api/network/node/${encodeURIComponent(n.id)}`);
+          const res = await fetch(`/api/network/node/${encodeURIComponent(n.id)}`);
           if (res.ok) {
             n.dbData = await res.json();
           }
