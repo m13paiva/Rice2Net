@@ -115,6 +115,10 @@ Community detection within networks was performed using Python **Infomap**. Modu
 
 Rice2Net operates as a client-side application supported by a Node.js Express middleware server connecting to a Neo4j graph database. The application logic is segmented into domain-specific modules.
 
+<p align="center">
+  <img src="figures/rice2net_scheme.png" alt="Rice2Net Architecture Scheme" width="100%">
+</p>
+
 <details><summary><b>Client Modules</b></summary>
 
 * **`globals.js`:** Initializes global states, visual configuration parameters, color palettes, and random number generation functions.
@@ -146,11 +150,7 @@ The application retrieves graph data using asynchronous HTTP requests directed a
 
 <details><summary><b>Database Architecture</b></summary>
 
-The data is stored in a Neo4j graph database. As illustrated in `db_structure.png`, the schema relies on a central `Gene` node. Peripheral nodes store annotation metadata and connect to the core `Gene` nodes via specific directional relationships. Regulatory and coexpression networks are formed by self-referential relationships between `Gene` nodes.
-
-<p align="center">
-  <img src="figures/db_structure.png" alt="Node and edge structure of the Neo4j Database." width="100%">
-</p>
+The data is stored in a Neo4j graph database. The schema relies on a central `Gene` node. Peripheral nodes store annotation metadata and connect to the core `Gene` nodes via specific directional relationships. Regulatory and coexpression networks are formed by self-referential relationships between `Gene` nodes.
 
 **Node Statistics**
 
