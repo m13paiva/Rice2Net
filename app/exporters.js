@@ -124,18 +124,12 @@ function initExportControls() {
 /**
  * Exports visible network edges to a Tab-Separated Values (TSV) file.
  */
-window.exportTSV = async function () {
+window.exportTSV = function () {
   try {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
 
     const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
-
-    const headers = [
-      "Source", "Target", "Weight", "IRP_score", "Directional", "Sign",
-      "Motif_ID", "Motif_Source", "Matched_Sequence", "Strand",
-      "Start", "Stop", "Score", "P_value", "Q_value", "Occurrence"
-    ];
-    const rows = [headers.join("\t")];
+    const rows = ["Source\tTarget\tWeight\tIRP_score\tDirectional\tSign"];
     let exportedCount = 0;
 
     links.forEach((l) => {
@@ -147,15 +141,14 @@ window.exportTSV = async function () {
       const tNode = typeof l.target === "object" ? l.target : nodes.find((n) => n.id === tId);
 
       if (!sNode || !tNode) return;
-      if ((sNode.isRogue && !VISIBILITY_STATE.Rogue) || sNode.color === CONFIG.visuals.colors.Transparent) return;
-      if ((tNode.isRogue && !VISIBILITY_STATE.Rogue) || tNode.color === CONFIG.visuals.colors.Transparent) return;
+      if ((sNode.isRogue && !VISIBILITY_STATE.Rogue && !sNode.isTarget) || sNode.color === CONFIG.visuals.colors.Transparent) return;
+      if ((tNode.isRogue && !VISIBILITY_STATE.Rogue && !tNode.isTarget) || tNode.color === CONFIG.visuals.colors.Transparent) return;
 
       const weight = l.weight !== undefined ? l.weight : (l.value || l.w || "1");
       const irpVal = l.irp !== undefined && l.irp !== null ? l.irp : "";
       const signVal = l.sign || "";
 
-      const hasReg = isRegActive && !!(l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0);
-      const isDirectional = hasReg;
+      const isDirectional = isRegActive && !!l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0;
 
       if (isDirectional) {
         l.directions.forEach((dir) => {
@@ -169,44 +162,8 @@ window.exportTSV = async function () {
 
           if (!sOut || !tOut) return;
 
-          const dirBinds = (dir.binds && dir.binds.length > 0)
-            ? dir.binds
-            : ((l.binds && l.binds.length > 0) ? l.binds : []);
-
-          if (dirBinds.length > 0) {
-            dirBinds.forEach((b) => {
-              rows.push([
-                sOut,
-                tOut,
-                weight,
-                irpVal,
-                "true",
-                signVal,
-                b.motif_id || "-",
-                b.motif_source || "-",
-                b.matched_sequence || "-",
-                b.strand || "-",
-                b.start !== undefined && b.start !== null ? b.start : "-",
-                b.stop !== undefined && b.stop !== null ? b.stop : "-",
-                b.score !== undefined && b.score !== null ? b.score : "-",
-                b.p_value !== undefined && b.p_value !== null ? b.p_value : "-",
-                b.q_value !== undefined && b.q_value !== null ? b.q_value : "-",
-                b.occurrence !== undefined && b.occurrence !== null ? b.occurrence : "-",
-              ].join("\t"));
-              exportedCount++;
-            });
-          } else {
-            rows.push([
-              sOut,
-              tOut,
-              weight,
-              irpVal,
-              "true",
-              signVal,
-              "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"
-            ].join("\t"));
-            exportedCount++;
-          }
+          rows.push(`${sOut}\t${tOut}\t${weight}\t${irpVal}\ttrue\t${signVal}`);
+          exportedCount++;
         });
       } else {
         const sOut = window.getExportNodeId ? window.getExportNodeId(sNode) : sId;
@@ -214,15 +171,7 @@ window.exportTSV = async function () {
 
         if (!sOut || !tOut) return;
 
-        rows.push([
-          sOut,
-          tOut,
-          weight,
-          irpVal,
-          "false",
-          signVal,
-          "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"
-        ].join("\t"));
+        rows.push(`${sOut}\t${tOut}\t${weight}\t${irpVal}\tfalse\t${signVal}`);
         exportedCount++;
       }
     });
@@ -286,8 +235,6 @@ window.exportJSON = async function () {
         const sNode = typeof l.source === "object" ? l.source : nodes.find((n) => n.id === sId);
         const tNode = typeof l.target === "object" ? l.target : nodes.find((n) => n.id === tId);
 
-        const includeReg = isRegActive && !!l.has_regulates;
-
         exportLinks.push({
           source: window.getExportNodeId && sNode ? window.getExportNodeId(sNode) : sId,
           target: window.getExportNodeId && tNode ? window.getExportNodeId(tNode) : tId,
@@ -295,9 +242,7 @@ window.exportJSON = async function () {
           irp: l.irp !== undefined && l.irp !== null ? l.irp : 0,
           sign: l.sign || null,
           has_interacts: l.has_interacts !== false,
-          has_regulates: includeReg,
-          directions: includeReg ? l.directions : null,
-          binds: includeReg ? (l.binds || []) : [],
+          has_regulates: isRegActive ? !!l.has_regulates : false,
         });
       }
     });

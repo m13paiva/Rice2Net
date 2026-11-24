@@ -325,35 +325,12 @@ window.showEdgeDetails = async function (edge) {
     bindsContainer.innerHTML = `<div style="text-align:center; padding:10px; color:#aaa;">Fetching detailed binding events...</div>`;
 
     try {
-      const edgeDirections = (edge.has_regulates && Array.isArray(edge.directions)) ? edge.directions : [];
-      const matchedDir = edgeDirections.find(d => d.src === reqSource && d.tgt === reqTarget);
+      const apiBase = typeof API_BASE !== "undefined" ? API_BASE : "";
+      const response = await fetch(`${apiBase}/api/network/edges/binds?source=${encodeURIComponent(reqSource)}&target=${encodeURIComponent(reqTarget)}`);
 
-      let binds = null;
-      if (matchedDir && Array.isArray(matchedDir.binds) && matchedDir.binds.length > 0) {
-        binds = matchedDir.binds;
-      } else if (Array.isArray(edge.binds) && edge.binds.length > 0) {
-        binds = edge.binds;
-      }
-
-      if (binds === null) {
-        if (window.IS_IMPORTED_NETWORK) {
-          binds = [];
-        } else {
-          const apiBase = typeof API_BASE !== "undefined" ? API_BASE : "";
-          const response = await fetch(`${apiBase}/api/network/edges/binds?source=${encodeURIComponent(reqSource)}&target=${encodeURIComponent(reqTarget)}`);
-
-          if (!response.ok) throw new Error("Failed to fetch binds");
-          const data = await response.json();
-          binds = data.binds || [];
-          if (matchedDir) matchedDir.binds = binds;
-          if (!edge.binds) edge.binds = [];
-          binds.forEach(b => {
-            if (!edge.binds.some(eb => eb.motif_id === b.motif_id && eb.start === b.start && eb.strand === b.strand)) {
-              edge.binds.push(b);
-            }
-          });
-        }
-      }
+      if (!response.ok) throw new Error("Failed to fetch binds");
+      const data = await response.json();
+      const binds = data.binds || [];
 
       if (binds && binds.length > 0) {
 

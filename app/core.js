@@ -86,10 +86,9 @@ window.importJSON = function (input) {
               irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
               sign: e.sign || null,
               has_interacts: e.has_interacts !== false,
-              has_regulates: !!e.has_regulates,
-              directions: e.directions || (e.has_regulates ? [{ src: String(sNode.id), tgt: String(tNode.id) }] : null),
-              binds: e.binds || [],
-              reg_matched: true,
+              has_regulates: false,
+              directions: null,
+              reg_matched: false,
             };
           })
           .filter(Boolean);
@@ -160,18 +159,7 @@ window.importEdges = function (input) {
         target: 1,
         weight: 2,
         irp: -1,
-        directional: -1,
         sign: -1,
-        motif_id: -1,
-        motif_source: -1,
-        matched_sequence: -1,
-        strand: -1,
-        start: -1,
-        stop: -1,
-        score: -1,
-        p_value: -1,
-        q_value: -1,
-        occurrence: -1,
       };
 
       const firstLine = lines[0].trim();
@@ -205,18 +193,7 @@ window.importEdges = function (input) {
             else if (h === "target" || h === "to") colMap.target = idx;
             else if (h === "weight" || h === "w" || h === "val" || h === "value") colMap.weight = idx;
             else if (h === "irp_score" || h === "irp") colMap.irp = idx;
-            else if (h === "directional" || h === "direction") colMap.directional = idx;
             else if (h === "sign") colMap.sign = idx;
-            else if (h === "motif_id") colMap.motif_id = idx;
-            else if (h === "motif_source") colMap.motif_source = idx;
-            else if (h === "matched_sequence") colMap.matched_sequence = idx;
-            else if (h === "strand") colMap.strand = idx;
-            else if (h === "start") colMap.start = idx;
-            else if (h === "stop") colMap.stop = idx;
-            else if (h === "score") colMap.score = idx;
-            else if (h === "p_value") colMap.p_value = idx;
-            else if (h === "q_value") colMap.q_value = idx;
-            else if (h === "occurrence") colMap.occurrence = idx;
           });
           startIdx = 1;
         }
@@ -233,7 +210,6 @@ window.importEdges = function (input) {
         let w = 1;
         let irp = null;
         let sign = null;
-        let isDirectional = false;
 
         if (hasHeader) {
           if (colMap.weight !== -1 && parts[colMap.weight] !== undefined) {
@@ -250,9 +226,6 @@ window.importEdges = function (input) {
               sign = (rawSign === "-" || rawSign.toLowerCase() === "negative" || rawSign === "-1") ? "-" : "+";
             }
           }
-          if (colMap.directional !== -1 && parts[colMap.directional] !== undefined) {
-            isDirectional = parts[colMap.directional].trim().toLowerCase() === "true";
-          }
         } else {
           // No header: dynamically scan columns after target (index 2 onwards)
           let assignedWeight = false;
@@ -265,8 +238,6 @@ window.importEdges = function (input) {
 
             if (p === "+" || p === "-" || pLower === "positive" || pLower === "negative" || p === "+1" || p === "-1") {
               sign = (p === "-" || pLower === "negative" || p === "-1") ? "-" : "+";
-            } else if (pLower === "true" || pLower === "false") {
-              isDirectional = pLower === "true";
             } else if (!isNaN(parseFloat(p))) {
               const num = parseFloat(p);
               if (!assignedWeight) {
@@ -289,26 +260,9 @@ window.importEdges = function (input) {
             irp: irp,
             sign: sign,
             has_interacts: true,
-            has_regulates: isDirectional,
-            directions: isDirectional ? [{ src: s, tgt: t }] : null,
-            binds: [],
-            reg_matched: true,
-          });
-        }
-
-        const edgeEntry = edgeMap.get(edgeKey);
-        if (colMap.motif_id !== -1 && parts[colMap.motif_id] && parts[colMap.motif_id] !== "-") {
-          edgeEntry.binds.push({
-            motif_id: parts[colMap.motif_id] || "",
-            motif_source: colMap.motif_source !== -1 ? parts[colMap.motif_source] || "" : "",
-            matched_sequence: colMap.matched_sequence !== -1 ? parts[colMap.matched_sequence] || "" : "",
-            strand: colMap.strand !== -1 ? parts[colMap.strand] || "" : "",
-            start: colMap.start !== -1 && !isNaN(parseInt(parts[colMap.start], 10)) ? parseInt(parts[colMap.start], 10) : null,
-            stop: colMap.stop !== -1 && !isNaN(parseInt(parts[colMap.stop], 10)) ? parseInt(parts[colMap.stop], 10) : null,
-            score: colMap.score !== -1 && !isNaN(parseFloat(parts[colMap.score])) ? parseFloat(parts[colMap.score]) : null,
-            p_value: colMap.p_value !== -1 && !isNaN(parseFloat(parts[colMap.p_value])) ? parseFloat(parts[colMap.p_value]) : null,
-            q_value: colMap.q_value !== -1 && !isNaN(parseFloat(parts[colMap.q_value])) ? parseFloat(parts[colMap.q_value]) : null,
-            occurrence: colMap.occurrence !== -1 && !isNaN(parseInt(parts[colMap.occurrence], 10)) ? parseInt(parts[colMap.occurrence], 10) : null,
+            has_regulates: false,
+            directions: null,
+            reg_matched: false,
           });
         }
 
@@ -340,10 +294,9 @@ window.importEdges = function (input) {
           irp: e.irp,
           sign: e.sign,
           has_interacts: e.has_interacts,
-          has_regulates: e.has_regulates,
-          directions: e.directions,
-          binds: e.binds || [],
-          reg_matched: true,
+          has_regulates: false,
+          directions: null,
+          reg_matched: false,
         }))
         .filter((l) => l.source && l.target);
 

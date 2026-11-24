@@ -161,9 +161,6 @@ window.applyEdgeFilter = function () {
  * Batches and fetches regulation relationship directions from the Neo4j API endpoint.
  */
 window.fetchRegulationEdges = async function () {
-  if (window.IS_IMPORTED_NETWORK) {
-    return;
-  }
   const pendingEdges = links.filter((l) => !l.reg_matched);
   if (pendingEdges.length === 0) {
     return;
@@ -252,103 +249,12 @@ window.fetchRegulationEdges = async function () {
       await new Promise((r) => setTimeout(r, 30));
     }
 
-    // Fetch supporting binding events for all visible regulation edges
-    const regEdges = links.filter((l) => l.has_regulates && (!l.binds || l.binds.length === 0));
-    if (regEdges.length > 0) {
-      if (loaderText) loaderText.innerText = "FETCHING BINDING EVIDENCE...";
-      await window.fetchBindsForEdges(regEdges);
-    }
-
     if (typeof window.draw === "function") requestAnimationFrame(window.draw);
 
   } catch (e) {
     alert(`Regulation data request failed: ${e.message}`);
   } finally {
     if (loader) loader.style.display = "none";
-  }
-};
-
-/**
- * Fetches motif binding events supporting regulation relations for an array of edges.
- * @param {Array<Object>} edgesToFetch - Edge link objects with has_regulates = true.
- */
-window.fetchBindsForEdges = async function (edgesToFetch) {
-  if (!edgesToFetch || edgesToFetch.length === 0) return;
-
-  const pairsToQuery = [];
-  const pairMap = new Map();
-
-  edgesToFetch.forEach((edge) => {
-    if (!edge.has_regulates || !Array.isArray(edge.directions)) return;
-    edge.directions.forEach((dir) => {
-      if (!dir.src || !dir.tgt) return;
-      const key = `${dir.src}->${dir.tgt}`;
-      if (!pairMap.has(key)) {
-        pairMap.set(key, []);
-        pairsToQuery.push({ source: dir.src, target: dir.tgt });
-      }
-      pairMap.get(key).push({ edge, dir });
-    });
-  });
-
-  if (pairsToQuery.length === 0) return;
-
-  const apiBase = typeof API_BASE !== "undefined" ? API_BASE : "";
-  const batchSize = 100;
-
-  for (let i = 0; i < pairsToQuery.length; i += batchSize) {
-    const batch = pairsToQuery.slice(i, i + batchSize);
-    try {
-      const response = await fetch(`${apiBase}/api/network/edges/binds`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pairs: batch }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const bindsByPair = data.bindsByPair || {};
-
-        batch.forEach((pair) => {
-          const key = `${pair.source}->${pair.target}`;
-          const binds = bindsByPair[key] || [];
-          const targets = pairMap.get(key) || [];
-          targets.forEach(({ edge, dir }) => {
-            dir.binds = binds;
-            if (!edge.binds) edge.binds = [];
-            binds.forEach((b) => {
-              if (!edge.binds.some((eb) => eb.motif_id === b.motif_id && eb.start === b.start && eb.strand === b.strand)) {
-                edge.binds.push(b);
-              }
-            });
-          });
-        });
-      } else {
-        await Promise.all(
-          batch.map(async (pair) => {
-            try {
-              const res = await fetch(`${apiBase}/api/network/edges/binds?source=${encodeURIComponent(pair.source)}&target=${encodeURIComponent(pair.target)}`);
-              if (res.ok) {
-                const { binds } = await res.json();
-                const key = `${pair.source}->${pair.target}`;
-                const targets = pairMap.get(key) || [];
-                targets.forEach(({ edge, dir }) => {
-                  dir.binds = binds || [];
-                  if (!edge.binds) edge.binds = [];
-                  (binds || []).forEach((b) => {
-                    if (!edge.binds.some((eb) => eb.motif_id === b.motif_id && eb.start === b.start && eb.strand === b.strand)) {
-                      edge.binds.push(b);
-                    }
-                  });
-                });
-              }
-            } catch (e) {}
-          })
-        );
-      }
-    } catch (e) {
-      console.warn("fetchBindsForEdges error:", e);
-    }
   }
 };
 
