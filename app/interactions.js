@@ -516,10 +516,6 @@ async function showNodeDetails(node) {
         node.identifier = dbData.identifier;
         node.metadata["Identifier"] = dbData.identifier;
       }
-      if (dbData.sign) {
-        node.sign = dbData.sign;
-        node.metadata["Sign"] = dbData.sign;
-      }
       if (dbData.kegg_gene) node.kegg_gene = dbData.kegg_gene;
       if (dbData.full_name) node.metadata["Description"] = dbData.full_name;
 
@@ -566,11 +562,6 @@ async function showNodeDetails(node) {
   const msuId = node.msu_id || (node.metadata && node.metadata["MSU_ID"]) || "-";
   html += `<div class="detail-row"><div class="detail-label">MSU ID</div><div class="detail-value">${msuId}</div></div>`;
   html += `<div class="detail-row"><div class="detail-label">RAP-DB ID</div><div class="detail-value">${node.id}</div></div>`;
-
-  const nodeSign = node.sign || (node.metadata && node.metadata["Sign"]);
-  if (nodeSign) {
-    html += `<div class="detail-row"><div class="detail-label">Sign</div><div class="detail-value">${nodeSign === "+" ? "+ (Positive)" : nodeSign === "-" ? "- (Negative)" : nodeSign}</div></div>`;
-  }
 
   html += `<div style="width: 100%; height: 1px; background-color: #444; margin: 15px 0;"></div>`;
 

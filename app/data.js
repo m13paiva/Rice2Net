@@ -104,10 +104,9 @@ window.applyEdgeFilter = function () {
 
   const textInput = document.getElementById("target-input");
   const text = textInput ? textInput.value : "";
-  const rawTargets = text
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const rawTargets = window.parseRawTargets
+    ? window.parseRawTargets(text)
+    : text.split(/[\r\n,\t]+/).map((s) => s.trim()).filter(Boolean);
   const targetSet = window.resolveTargetIds
     ? window.resolveTargetIds(rawTargets)
     : new Set(rawTargets);
@@ -430,15 +429,10 @@ async function hydrateMetadata() {
         n.identifier = n.identifier || dbInfo.identifier;
         n.metadata["Identifier"] = dbInfo.identifier;
       }
-      if (dbInfo.sign) {
-        n.sign = n.sign || dbInfo.sign;
-        n.metadata["Sign"] = dbInfo.sign;
-      }
     }
 
     if (n.identifier) n.metadata["Identifier"] = n.identifier;
     if (n.msu_id) n.metadata["MSU_ID"] = n.msu_id;
-    if (n.sign) n.metadata["Sign"] = n.sign;
 
     if (window.applyNodeTypeStyling) window.applyNodeTypeStyling(n);
   });
@@ -456,7 +450,6 @@ function cacheMetaSnapshot() {
         symbol: n.symbol || "",
         identifier: n.identifier || (n.metadata && n.metadata.Identifier) || "",
         msu_id: n.msu_id || (n.metadata && n.metadata.MSU_ID) || "",
-        sign: n.sign || (n.metadata && n.metadata.Sign) || null,
         metadata: n.metadata ? { ...n.metadata } : {},
         tfDetail: Array.isArray(n.tfDetail) ? n.tfDetail.map((x) => ({ ...x })) : [],
         keggDetail: Array.isArray(n.keggDetail) ? n.keggDetail.map((x) => ({ ...x })) : [],
@@ -536,11 +529,9 @@ async function main() {
       n.tfDetail = [];
       n.originalType = n.originalType || "Gene";
       n.identifier = n.identifier || "";
-      n.sign = n.sign || null;
 
       if (n.msu_id) n.metadata["MSU_ID"] = n.msu_id;
       if (n.identifier) n.metadata["Identifier"] = n.identifier;
-      if (n.sign) n.metadata["Sign"] = n.sign;
 
       if (window.applyNodeTypeStyling) window.applyNodeTypeStyling(n);
     });
@@ -582,7 +573,93 @@ async function main() {
   }
 }
 
+/**
+ * In-memory reversion to the embedded database network without browser page reloads.
+ */
+window.revertToEmbeddedNetworkCore = async function () {
+  const jsonInfo = document.getElementById("import-json-info");
+  if (jsonInfo) jsonInfo.style.display = "none";
+  const edgesInfo = document.getElementById("import-edges-info");
+  if (edgesInfo) edgesInfo.style.display = "none";
+  const jsonFile = document.getElementById("import-json-file");
+  if (jsonFile) jsonFile.value = "";
+  const edgesFile = document.getElementById("import-edges-file");
+  if (edgesFile) edgesFile.value = "";
+
+  window.IS_IMPORTED_NETWORK = false;
+  window.IS_FILTERED_NETWORK = false;
+  if (typeof VISIBILITY_STATE !== "undefined") {
+    VISIBILITY_STATE.EdgeBoth = 0;
+  }
+  if (typeof enterApp === "function") enterApp();
+
+  const loader = document.getElementById("loader");
+  const loaderText = document.getElementById("loader-text");
+  const progressBar = document.getElementById("progress-bar");
+
+  if (RAW_DATA && Array.isArray(RAW_DATA.dbNodes) && RAW_DATA.dbNodes.length > 0 && Array.isArray(RAW_DATA.dbLinks)) {
+    if (loader) loader.style.display = "block";
+    if (loaderText) loaderText.innerText = "RESTORING EMBEDDED NETWORK...";
+    if (progressBar) progressBar.style.width = "50%";
+    await new Promise((r) => setTimeout(r, 20));
+
+    RAW_DATA.nodes = RAW_DATA.dbNodes.map((n) => ({ ...n }));
+    RAW_DATA.links = RAW_DATA.dbLinks.map((e) => ({ ...e }));
+
+    nodes = RAW_DATA.nodes.map((n) => ({ ...n }));
+    RAW_DATA.workingNodes = nodes;
+    RAW_DATA.workingLinks = null;
+
+    if (typeof loadClusters === "function") {
+      await loadClusters();
+    }
+
+    nodes.forEach((n) => {
+      n.metadata = {};
+      n.keggDetail = [];
+      n.tfDetail = [];
+      n.originalType = n.originalType || "Gene";
+      n.identifier = n.identifier || "";
+
+      if (n.msu_id) n.metadata["MSU_ID"] = n.msu_id;
+      if (n.identifier) n.metadata["Identifier"] = n.identifier;
+
+      if (window.applyNodeTypeStyling) window.applyNodeTypeStyling(n);
+    });
+
+    if (typeof cacheMetaSnapshot === "function") cacheMetaSnapshot();
+
+    const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
+    links = RAW_DATA.links
+      .map((e) => ({
+        source: nodeMap.get(String(e.source?.id || e.source)),
+        target: nodeMap.get(String(e.target?.id || e.target)),
+        weight: e.weight || e.value || 1,
+        irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
+        sign: e.sign || null,
+        has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
+        has_regulates: e.has_regulates || false,
+        directions: e.directions || null,
+        binds: e.binds || null,
+        reg_matched: false,
+      }))
+      .filter((l) => l.source && l.target);
+
+    RAW_DATA.adjacency = buildAdjacency(nodes, links);
+
+    if (typeof updateClusterAvailability === "function") updateClusterAvailability();
+
+    if (loader) loader.style.display = "none";
+    if (typeof finishSetup === "function") finishSetup(true);
+    if (typeof window.reapplyColors === "function") window.reapplyColors();
+    if (typeof window.autoFit === "function") window.autoFit();
+  } else if (typeof main === "function") {
+    await main();
+  }
+};
+
 window.__APP_CORE__.main = main;
 window.__APP_CORE__.hydrateMetadata = hydrateMetadata;
 window.__APP_CORE__.buildAdjacency = buildAdjacency;
 window.__APP_CORE__.cacheMetaSnapshot = cacheMetaSnapshot;
+window.__APP_CORE__.revertToEmbeddedNetworkCore = window.revertToEmbeddedNetworkCore;
