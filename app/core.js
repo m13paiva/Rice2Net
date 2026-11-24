@@ -29,6 +29,7 @@ window.importJSON = function (input) {
           throw new Error("Invalid JSON structure");
 
         window.IS_IMPORTED_NETWORK = true;
+        VISIBILITY_STATE.EdgeBoth = 0;
         if (typeof window.updateClusterAvailability === "function") window.updateClusterAvailability();
 
         const nameDisplay = document.getElementById('import-json-name');
@@ -88,8 +89,8 @@ window.importJSON = function (input) {
               has_interacts: e.has_interacts !== false,
               has_regulates: !!e.has_regulates,
               directions: e.directions || (e.has_regulates ? [{ src: String(sNode.id), tgt: String(tNode.id) }] : null),
-              binds: e.binds || null,
-              reg_matched: !!e.has_regulates,
+              binds: e.binds || [],
+              reg_matched: true,
             };
           })
           .filter(Boolean);
@@ -134,6 +135,7 @@ window.importEdges = function (input) {
       await sleep(10);
 
       window.IS_IMPORTED_NETWORK = true;
+      VISIBILITY_STATE.EdgeBoth = 0;
       if (typeof window.updateClusterAvailability === "function") window.updateClusterAvailability();
 
       const nameDisplay = document.getElementById('import-edges-name');
@@ -239,7 +241,7 @@ window.importEdges = function (input) {
             has_regulates: isDirectional,
             directions: isDirectional ? [{ src: s, tgt: t }] : null,
             binds: [],
-            reg_matched: isDirectional,
+            reg_matched: true,
           });
         }
 
@@ -289,8 +291,8 @@ window.importEdges = function (input) {
           has_interacts: e.has_interacts,
           has_regulates: e.has_regulates,
           directions: e.directions,
-          binds: e.binds && e.binds.length > 0 ? e.binds : null,
-          reg_matched: e.reg_matched,
+          binds: e.binds || [],
+          reg_matched: true,
         }))
         .filter((l) => l.source && l.target);
 
@@ -654,6 +656,7 @@ function finishSetup(resetParams) {
   if (typeof window.setMode === "function") window.setMode("pan");
   if (typeof window.highlightCurrentView === "function")
     window.highlightCurrentView();
+  if (typeof window.reapplyColors === "function") window.reapplyColors();
 
   setTimeout(() => window.autoFit && window.autoFit(), 100);
 }

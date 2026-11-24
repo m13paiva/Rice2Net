@@ -162,6 +162,9 @@ window.applyEdgeFilter = function () {
  * Batches and fetches regulation relationship directions from the Neo4j API endpoint.
  */
 window.fetchRegulationEdges = async function () {
+  if (window.IS_IMPORTED_NETWORK) {
+    return;
+  }
   const pendingEdges = links.filter((l) => !l.reg_matched);
   if (pendingEdges.length === 0) {
     return;

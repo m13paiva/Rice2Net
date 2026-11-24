@@ -336,19 +336,23 @@ window.showEdgeDetails = async function (edge) {
       }
 
       if (binds === null) {
-        const apiBase = typeof API_BASE !== "undefined" ? API_BASE : "";
-        const response = await fetch(`${apiBase}/api/network/edges/binds?source=${encodeURIComponent(reqSource)}&target=${encodeURIComponent(reqTarget)}`);
+        if (window.IS_IMPORTED_NETWORK) {
+          binds = [];
+        } else {
+          const apiBase = typeof API_BASE !== "undefined" ? API_BASE : "";
+          const response = await fetch(`${apiBase}/api/network/edges/binds?source=${encodeURIComponent(reqSource)}&target=${encodeURIComponent(reqTarget)}`);
 
-        if (!response.ok) throw new Error("Failed to fetch binds");
-        const data = await response.json();
-        binds = data.binds || [];
-        if (matchedDir) matchedDir.binds = binds;
-        if (!edge.binds) edge.binds = [];
-        binds.forEach(b => {
-          if (!edge.binds.some(eb => eb.motif_id === b.motif_id && eb.start === b.start && eb.strand === b.strand)) {
-            edge.binds.push(b);
-          }
-        });
+          if (!response.ok) throw new Error("Failed to fetch binds");
+          const data = await response.json();
+          binds = data.binds || [];
+          if (matchedDir) matchedDir.binds = binds;
+          if (!edge.binds) edge.binds = [];
+          binds.forEach(b => {
+            if (!edge.binds.some(eb => eb.motif_id === b.motif_id && eb.start === b.start && eb.strand === b.strand)) {
+              edge.binds.push(b);
+            }
+          });
+        }
       }
 
       if (binds && binds.length > 0) {
