@@ -13,8 +13,8 @@
  * @returns {boolean} True if visible for export.
  */
 function isNodeVisibleForExport(node, targetSet = null) {
-  if (!node) return false;
-  if (node.isRogue && !VISIBILITY_STATE.Rogue) return false;
+  if (!node || node.isDummy || String(node.id).startsWith("__dummy")) return false;
+  if (node.isRogue && !VISIBILITY_STATE.Rogue && !node.isTarget) return false;
 
   const baseSpec = window.getTypeVisualSpec ? window.getTypeVisualSpec(node.originalType || "Gene") : { visibilityKey: "Gene" };
   if (VISIBILITY_STATE[baseSpec.visibilityKey] > 0) return true;
@@ -255,7 +255,8 @@ window.exportJSON = async function () {
     const visibleNodeMap = new Set();
 
     nodes.forEach((n) => {
-      if ((n.isRogue && !VISIBILITY_STATE.Rogue) || n.color === CONFIG.visuals.colors.Transparent) return;
+      if (n.isDummy || String(n.id).startsWith("__dummy")) return;
+      if ((n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) || n.color === CONFIG.visuals.colors.Transparent) return;
       visibleNodeMap.add(n.id);
       exportNodes.push({
         id: window.getExportNodeId ? window.getExportNodeId(n) : n.id,
@@ -323,7 +324,8 @@ window.exportGenesTSV = async function () {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
 
     const exportNodes = nodes.filter((n) => {
-      if ((n.isRogue && !VISIBILITY_STATE.Rogue) || n.color === CONFIG.visuals.colors.Transparent) return false;
+      if (n.isDummy || String(n.id).startsWith("__dummy")) return false;
+      if ((n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) || n.color === CONFIG.visuals.colors.Transparent) return false;
       return true;
     });
 
@@ -476,7 +478,8 @@ window.exportPNG = function () {
       let hasVisible = false;
 
       for (const n of nodes) {
-        if (n.isRogue && !VISIBILITY_STATE.Rogue) continue;
+        if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
+        if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
         if (!forceShowEdges && n.color === CONFIG.visuals.colors.Transparent) continue;
         hasVisible = true;
         if (n.x < minX) minX = n.x;
@@ -486,7 +489,7 @@ window.exportPNG = function () {
 
         const baseSpec = window.getTypeVisualSpec ? window.getTypeVisualSpec(n.originalType || "Gene") : { visibilityKey: "Gene" };
         presentTypes.add(baseSpec.visibilityKey);
-        if (targetSet.has(n.id)) hasPresentTarget = true;
+        if (targetSet.has(String(n.id))) hasPresentTarget = true;
         if (CLUSTER_STATE.data.has(n.id)) presentClusters.add(CLUSTER_STATE.data.get(n.id));
       }
 
@@ -632,7 +635,8 @@ window.exportPNG = function () {
       });
 
       for (const n of nodes) {
-        if (n.isRogue && !VISIBILITY_STATE.Rogue) continue;
+        if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
+        if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
         if (n.color === CONFIG.visuals.colors.Transparent) continue;
 
         exportCtx.save();

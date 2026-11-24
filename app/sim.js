@@ -353,60 +353,71 @@ window.draw = function () {
     }
   }
 
-  if (simplify) {
-    for (const n of nodes) {
-      if (n.isRogue && !VISIBILITY_STATE.Rogue) continue;
-      if (n.color === CONFIG.visuals.colors.Transparent) continue;
+  const drawNodePass = (isTargetPass) => {
+    if (simplify) {
+      for (const n of nodes) {
+        if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
+        if (!!n.isTarget !== isTargetPass) continue;
+        if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
+        if (n.color === CONFIG.visuals.colors.Transparent) continue;
 
-      ctx.globalAlpha = n.isRogue ? CONFIG.visuals.rogueOpacity : 1.0;
-      ctx.fillStyle = n.color;
-      ctx.fillRect(n.x - n.r, n.y - n.r, n.r * 2, n.r * 2);
-      ctx.globalAlpha = 1.0;
-    }
-  } else {
-    for (const n of nodes) {
-      if (n.isRogue && !VISIBILITY_STATE.Rogue) continue;
-      if (n.color === CONFIG.visuals.colors.Transparent) continue;
-
-      ctx.save();
-
-      const isHollow = !!n.hollow;
-      const isDashed = n.isRogue ? true : !!n.dashed;
-
-      const strokeW = (isHollow ? 1.6 : 1) / transform.k;
-      ctx.lineWidth = strokeW;
-      ctx.setLineDash(isDashed ? [4 / transform.k, 3 / transform.k] : []);
-
-      ctx.beginPath();
-      if (n.shape === "diamond") {
-        const r = n.r * 1.2;
-        ctx.moveTo(n.x, n.y - r);
-        ctx.lineTo(n.x + r, n.y);
-        ctx.lineTo(n.x, n.y + r);
-        ctx.lineTo(n.x - r, n.y);
-        ctx.closePath();
-      } else {
-        ctx.arc(n.x, n.y, n.r, 0, 2 * Math.PI);
-      }
-
-      const fillColor = n.fillColor !== undefined ? n.fillColor : n.color;
-      if (
-        !isHollow &&
-        fillColor &&
-        fillColor !== CONFIG.visuals.colors.Transparent
-      ) {
-        ctx.globalAlpha = n.isRogue ? CONFIG.visuals.rogueOpacity : 1.0;
-        ctx.fillStyle = fillColor;
-        ctx.fill();
+        ctx.globalAlpha = n.isRogue && !n.isTarget ? CONFIG.visuals.rogueOpacity : 1.0;
+        ctx.fillStyle = n.color;
+        const r = n.isTarget ? Math.max(n.r, 4 / transform.k) : n.r;
+        ctx.fillRect(n.x - r, n.y - r, r * 2, r * 2);
         ctx.globalAlpha = 1.0;
       }
+    } else {
+      for (const n of nodes) {
+        if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
+        if (!!n.isTarget !== isTargetPass) continue;
+        if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
+        if (n.color === CONFIG.visuals.colors.Transparent) continue;
 
-      ctx.strokeStyle = n.strokeColor || n.color || "#000";
-      ctx.stroke();
-      ctx.restore();
+        ctx.save();
+
+        const isHollow = !!n.hollow;
+        const isDashed = n.isRogue ? true : !!n.dashed;
+
+        const strokeW = (isHollow ? 1.6 : 1) / transform.k;
+        ctx.lineWidth = strokeW;
+        ctx.setLineDash(isDashed ? [4 / transform.k, 3 / transform.k] : []);
+
+        const baseR = n.isTarget ? Math.max(n.r, 4 / transform.k) : n.r;
+        ctx.beginPath();
+        if (n.shape === "diamond") {
+          const r = baseR * 1.2;
+          ctx.moveTo(n.x, n.y - r);
+          ctx.lineTo(n.x + r, n.y);
+          ctx.lineTo(n.x, n.y + r);
+          ctx.lineTo(n.x - r, n.y);
+          ctx.closePath();
+        } else {
+          ctx.arc(n.x, n.y, baseR, 0, 2 * Math.PI);
+        }
+
+        const fillColor = n.fillColor !== undefined ? n.fillColor : n.color;
+        if (
+          !isHollow &&
+          fillColor &&
+          fillColor !== CONFIG.visuals.colors.Transparent
+        ) {
+          ctx.globalAlpha = n.isRogue && !n.isTarget ? CONFIG.visuals.rogueOpacity : 1.0;
+          ctx.fillStyle = fillColor;
+          ctx.fill();
+          ctx.globalAlpha = 1.0;
+        }
+
+        ctx.strokeStyle = n.strokeColor || n.color || "#000";
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.setLineDash([]);
     }
-    ctx.setLineDash([]);
-  }
+  };
+
+  drawNodePass(false);
+  drawNodePass(true);
 
   ctx.restore();
 };
@@ -493,18 +504,20 @@ function finishSetup(resetParams) {
         ? CONFIG.visuals.colors.Transparent
         : "transparent";
     nodes.push({
-      ...nodes[0],
       id: "__dummy1",
+      isDummy: true,
       x: nodes[0].x - 150,
       y: nodes[0].y - 150,
+      r: 1,
       color: transColor,
       isRogue: true,
     });
     nodes.push({
-      ...nodes[0],
       id: "__dummy2",
+      isDummy: true,
       x: nodes[0].x + 150,
       y: nodes[0].y + 150,
+      r: 1,
       color: transColor,
       isRogue: true,
     });
@@ -515,7 +528,7 @@ function finishSetup(resetParams) {
     .quadtree()
     .x((d) => d.x)
     .y((d) => d.y)
-    .addAll(nodes);
+    .addAll(nodes.filter((n) => !n.isDummy && !String(n.id).startsWith("__dummy")));
 
   if (typeof window.setMode === "function") window.setMode("pan");
   if (typeof window.highlightCurrentView === "function")
@@ -524,12 +537,14 @@ function finishSetup(resetParams) {
   setTimeout(() => {
     if (window.autoFit) window.autoFit();
     if (dummiesAdded) {
-      nodes = nodes.filter((n) => !n.id.startsWith("__dummy"));
+      nodes = nodes.filter((n) => !n.isDummy && !String(n.id).startsWith("__dummy"));
       quadtree = d3
         .quadtree()
         .x((d) => d.x)
         .y((d) => d.y)
         .addAll(nodes);
+      if (typeof window.updateActiveCounts === "function") window.updateActiveCounts();
+      if (typeof window.updateTargetCounts === "function") window.updateTargetCounts();
     }
   }, 100);
 }

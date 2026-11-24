@@ -733,7 +733,7 @@ canvas.addEventListener('contextmenu', (e) => {
     const wy = (my - transform.y) / transform.k;
     const node = quadtree.find(wx, wy, 10 / transform.k + 5);
 
-    if (node && node.color !== CONFIG.visuals.colors.Transparent && (!node.isRogue || VISIBILITY_STATE.Rogue)) {
+    if (node && node.color !== CONFIG.visuals.colors.Transparent && (!node.isRogue || VISIBILITY_STATE.Rogue || node.isTarget)) {
 
         const uniqueNeighbors = new Map();
         nodes.forEach(n => uniqueNeighbors.set(String(n.id), new Set()));

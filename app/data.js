@@ -396,18 +396,46 @@ async function hydrateMetadata() {
   if (loaderText) loaderText.innerText = "APPLYING METADATA...";
   await new Promise(r => setTimeout(r, 50));
 
+  const normKey = (s) => String(s || "").trim().toLowerCase();
+  const normMsu = (s) => normKey(s).replace(/^loc_/, "").replace(/\.\d+$/, "");
+  const normRap = (s) => normKey(s).replace(/^(os\d{2})t(\d{7})(-\d+)?$/, "$1g$2");
+
   const dbMap = new Map();
   if (RAW_DATA.dbNodes) {
     RAW_DATA.dbNodes.forEach(n => {
-      dbMap.set(String(n.id), n);
-      if (n.msu_id) {
-        dbMap.set(String(n.msu_id), n);
-        dbMap.set(String(n.msu_id).replace(/\.\d+$/, ""), n);
+      const idKey = normKey(n.id);
+      if (idKey) dbMap.set(idKey, n);
+      if (n.msu_id && n.msu_id !== ".") {
+        String(n.msu_id).split(/[,;\s]+/).map(s => s.trim()).filter(Boolean).forEach(part => {
+          const pk = normKey(part);
+          if (pk) dbMap.set(pk, n);
+          const noIso = pk.replace(/\.\d+$/, "");
+          if (noIso) dbMap.set(noIso, n);
+          const stripped = normMsu(part);
+          if (stripped) dbMap.set(stripped, n);
+        });
       }
-      if (n.identifier) dbMap.set(String(n.identifier), n);
-      if (n.symbol && n.symbol !== ".") dbMap.set(String(n.symbol), n);
+      if (n.identifier && n.identifier !== ".") {
+        const ik = normKey(n.identifier);
+        if (ik && !dbMap.has(ik)) dbMap.set(ik, n);
+      }
+      if (n.symbol && n.symbol !== ".") {
+        const sk = normKey(n.symbol);
+        if (sk && !dbMap.has(sk)) dbMap.set(sk, n);
+      }
     });
   }
+
+  const lookupDb = (val) => {
+    if (!val || val === ".") return null;
+    const k = normKey(val);
+    if (dbMap.has(k)) return dbMap.get(k);
+    const rk = normRap(val);
+    if (dbMap.has(rk)) return dbMap.get(rk);
+    const mk = normMsu(val);
+    if (dbMap.has(mk)) return dbMap.get(mk);
+    return null;
+  };
 
   nodes.forEach((n) => {
     n.metadata = n.metadata || {};
@@ -416,11 +444,14 @@ async function hydrateMetadata() {
     n.symbol = n.symbol || "";
     n.originalType = n.originalType || "Gene";
 
-    const stringId = String(n.id);
-    if (dbMap.has(stringId)) {
-      const dbInfo = dbMap.get(stringId);
+    const dbInfo = lookupDb(n.id) || lookupDb(n.rap_id) || lookupDb(n.msu_id) || lookupDb(n.identifier);
+    if (dbInfo) {
       n.originalType = dbInfo.originalType || n.originalType;
       n.symbol = dbInfo.symbol || n.symbol;
+      if (dbInfo.id) {
+        n.rap_id = n.rap_id || dbInfo.id;
+        n.metadata["RAP_ID"] = dbInfo.id;
+      }
       if (dbInfo.msu_id) {
         n.msu_id = n.msu_id || dbInfo.msu_id;
         n.metadata["MSU_ID"] = dbInfo.msu_id;
@@ -431,6 +462,7 @@ async function hydrateMetadata() {
       }
     }
 
+    if (n.rap_id) n.metadata["RAP_ID"] = n.rap_id;
     if (n.identifier) n.metadata["Identifier"] = n.identifier;
     if (n.msu_id) n.metadata["MSU_ID"] = n.msu_id;
 
@@ -448,6 +480,7 @@ function cacheMetaSnapshot() {
       {
         originalType: n.originalType || "Gene",
         symbol: n.symbol || "",
+        rap_id: n.rap_id || (n.metadata && n.metadata.RAP_ID) || "",
         identifier: n.identifier || (n.metadata && n.metadata.Identifier) || "",
         msu_id: n.msu_id || (n.metadata && n.metadata.MSU_ID) || "",
         metadata: n.metadata ? { ...n.metadata } : {},
@@ -492,6 +525,8 @@ async function main() {
   const loaderText = document.getElementById("loader-text");
   const progressBar = document.getElementById("progress-bar");
 
+  if (document.body && document.body.classList) document.body.classList.add("is-loading");
+  if (loader) loader.style.display = "block";
   if (loaderText) loaderText.innerText = "FETCHING LIGHTWEIGHT TOPOLOGY...";
   if (progressBar) progressBar.style.width = "10%";
   await new Promise(r => setTimeout(r, 50));
@@ -559,24 +594,37 @@ async function main() {
     if (nodes.length > 0 && nodes.some((n) => n.x !== undefined && n.x !== null)) {
       if (loaderText) loaderText.innerText = "RENDERING...";
       if (progressBar) progressBar.style.width = "100%";
-      loader.style.display = "none";
       if (typeof finishSetup === "function") finishSetup(true);
+      if (loader) loader.style.display = "none";
+      if (document.body && document.body.classList) document.body.classList.remove("is-loading");
     } else {
       if (loaderText) loaderText.innerText = "PREPARING PHYSICS...";
       if (progressBar) progressBar.style.width = "100%";
       await new Promise(r => setTimeout(r, 50));
+      if (document.body && document.body.classList) document.body.classList.remove("is-loading");
       if (typeof startCalculation === "function") startCalculation(true);
     }
   } catch (error) {
     console.error("Failed to fetch from Neo4j API.", error);
     if (loaderText) loaderText.innerText = "Error: Database connection failed";
+    if (document.body && document.body.classList) document.body.classList.remove("is-loading");
   }
 }
 
 /**
  * In-memory reversion to the embedded database network without browser page reloads.
+ * Immediately clears the canvas, locks interaction, and renders progress popup stages.
  */
 window.revertToEmbeddedNetworkCore = async function () {
+  const nextPaint = () => new Promise((r) => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => setTimeout(r, 30));
+    } else {
+      setTimeout(r, 30);
+    }
+  });
+
+  // 1. Immediately clear import UI, overlays, filters, and active selection state
   const jsonInfo = document.getElementById("import-json-info");
   if (jsonInfo) jsonInfo.style.display = "none";
   const edgesInfo = document.getElementById("import-edges-info");
@@ -586,75 +634,130 @@ window.revertToEmbeddedNetworkCore = async function () {
   const edgesFile = document.getElementById("import-edges-file");
   if (edgesFile) edgesFile.value = "";
 
+  const targetInput = document.getElementById("target-input");
+  if (targetInput) targetInput.value = "";
+  const targetFile = document.getElementById("target-file");
+  if (targetFile) targetFile.value = "";
+  if (typeof window.updateIRPControlUI === "function") window.updateIRPControlUI(0);
+  if (typeof window.closeDetails === "function") window.closeDetails();
+
+  const tooltipEl = document.getElementById("tooltip");
+  if (tooltipEl) tooltipEl.style.display = "none";
+  const ctxMenu = document.getElementById("context-menu");
+  if (ctxMenu) ctxMenu.style.display = "none";
+
+  if (typeof simulation !== "undefined" && simulation) simulation.stop();
+
   window.IS_IMPORTED_NETWORK = false;
   window.IS_FILTERED_NETWORK = false;
   if (typeof VISIBILITY_STATE !== "undefined") {
     VISIBILITY_STATE.EdgeBoth = 0;
+    VISIBILITY_STATE.Rogue = 0;
   }
   if (typeof enterApp === "function") enterApp();
+
+  // 2. Immediately clear canvas & disable interaction before doing any work
+  nodes = [];
+  links = [];
+  if (typeof quadtree !== "undefined") quadtree = null;
+  if (typeof HOVERED_NODE !== "undefined") HOVERED_NODE = null;
+  if (typeof HOVERED_EDGE !== "undefined") HOVERED_EDGE = null;
+  if (typeof SELECTED_NODE !== "undefined") SELECTED_NODE = null;
+
+  const valNodes = document.getElementById("val-nodes");
+  const valEdges = document.getElementById("val-edges");
+  const valTargets = document.getElementById("val-targets");
+  if (valNodes) valNodes.innerText = "-";
+  if (valEdges) valEdges.innerText = "-";
+  if (valTargets) valTargets.style.display = "none";
+
+  if (typeof window.draw === "function") window.draw();
 
   const loader = document.getElementById("loader");
   const loaderText = document.getElementById("loader-text");
   const progressBar = document.getElementById("progress-bar");
 
-  if (RAW_DATA && Array.isArray(RAW_DATA.dbNodes) && RAW_DATA.dbNodes.length > 0 && Array.isArray(RAW_DATA.dbLinks)) {
-    if (loader) loader.style.display = "block";
-    if (loaderText) loaderText.innerText = "RESTORING EMBEDDED NETWORK...";
-    if (progressBar) progressBar.style.width = "50%";
-    await new Promise((r) => setTimeout(r, 20));
+  if (document.body && document.body.classList) document.body.classList.add("is-loading");
+  if (loader) loader.style.display = "block";
+  if (loaderText) loaderText.innerText = "CLEARING WORKSPACE...";
+  if (progressBar) progressBar.style.width = "10%";
+  await nextPaint();
 
-    RAW_DATA.nodes = RAW_DATA.dbNodes.map((n) => ({ ...n }));
-    RAW_DATA.links = RAW_DATA.dbLinks.map((e) => ({ ...e }));
+  try {
+    if (RAW_DATA && Array.isArray(RAW_DATA.dbNodes) && RAW_DATA.dbNodes.length > 0 && Array.isArray(RAW_DATA.dbLinks)) {
+      if (loaderText) loaderText.innerText = "RESTORING EMBEDDED TOPOLOGY...";
+      if (progressBar) progressBar.style.width = "30%";
+      await nextPaint();
 
-    nodes = RAW_DATA.nodes.map((n) => ({ ...n }));
-    RAW_DATA.workingNodes = nodes;
-    RAW_DATA.workingLinks = null;
+      RAW_DATA.nodes = RAW_DATA.dbNodes.map((n) => ({ ...n }));
+      RAW_DATA.links = RAW_DATA.dbLinks.map((e) => ({ ...e }));
 
-    if (typeof loadClusters === "function") {
-      await loadClusters();
+      nodes = RAW_DATA.nodes.map((n) => ({ ...n }));
+      RAW_DATA.workingNodes = nodes;
+      RAW_DATA.workingLinks = null;
+
+      if (typeof loadClusters === "function") {
+        if (loaderText) loaderText.innerText = "FETCHING CLUSTERS...";
+        if (progressBar) progressBar.style.width = "55%";
+        await nextPaint();
+        await loadClusters();
+      }
+
+      if (loaderText) loaderText.innerText = "PREPARING METADATA & LINKS...";
+      if (progressBar) progressBar.style.width = "75%";
+      await nextPaint();
+
+      nodes.forEach((n) => {
+        n.metadata = {};
+        n.keggDetail = [];
+        n.tfDetail = [];
+        n.originalType = n.originalType || "Gene";
+        n.identifier = n.identifier || "";
+
+        if (n.msu_id) n.metadata["MSU_ID"] = n.msu_id;
+        if (n.identifier) n.metadata["Identifier"] = n.identifier;
+
+        if (window.applyNodeTypeStyling) window.applyNodeTypeStyling(n);
+      });
+
+      if (typeof cacheMetaSnapshot === "function") cacheMetaSnapshot();
+
+      const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
+      links = RAW_DATA.links
+        .map((e) => ({
+          source: nodeMap.get(String(e.source?.id || e.source)),
+          target: nodeMap.get(String(e.target?.id || e.target)),
+          weight: e.weight || e.value || 1,
+          irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
+          sign: e.sign || null,
+          has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
+          has_regulates: e.has_regulates || false,
+          directions: e.directions || null,
+          binds: e.binds || null,
+          reg_matched: false,
+        }))
+        .filter((l) => l.source && l.target);
+
+      RAW_DATA.adjacency = buildAdjacency(nodes, links);
+
+      if (typeof updateClusterAvailability === "function") updateClusterAvailability();
+
+      if (loaderText) loaderText.innerText = "RENDERING GLOBAL NETWORK...";
+      if (progressBar) progressBar.style.width = "95%";
+      await nextPaint();
+
+      if (typeof finishSetup === "function") finishSetup(true);
+      if (typeof window.reapplyColors === "function") window.reapplyColors();
+      if (typeof window.autoFit === "function") window.autoFit();
+
+      if (progressBar) progressBar.style.width = "100%";
+      await nextPaint();
+    } else if (typeof main === "function") {
+      await main();
     }
-
-    nodes.forEach((n) => {
-      n.metadata = {};
-      n.keggDetail = [];
-      n.tfDetail = [];
-      n.originalType = n.originalType || "Gene";
-      n.identifier = n.identifier || "";
-
-      if (n.msu_id) n.metadata["MSU_ID"] = n.msu_id;
-      if (n.identifier) n.metadata["Identifier"] = n.identifier;
-
-      if (window.applyNodeTypeStyling) window.applyNodeTypeStyling(n);
-    });
-
-    if (typeof cacheMetaSnapshot === "function") cacheMetaSnapshot();
-
-    const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
-    links = RAW_DATA.links
-      .map((e) => ({
-        source: nodeMap.get(String(e.source?.id || e.source)),
-        target: nodeMap.get(String(e.target?.id || e.target)),
-        weight: e.weight || e.value || 1,
-        irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
-        sign: e.sign || null,
-        has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
-        has_regulates: e.has_regulates || false,
-        directions: e.directions || null,
-        binds: e.binds || null,
-        reg_matched: false,
-      }))
-      .filter((l) => l.source && l.target);
-
-    RAW_DATA.adjacency = buildAdjacency(nodes, links);
-
-    if (typeof updateClusterAvailability === "function") updateClusterAvailability();
-
+  } finally {
     if (loader) loader.style.display = "none";
-    if (typeof finishSetup === "function") finishSetup(true);
-    if (typeof window.reapplyColors === "function") window.reapplyColors();
-    if (typeof window.autoFit === "function") window.autoFit();
-  } else if (typeof main === "function") {
-    await main();
+    if (document.body && document.body.classList) document.body.classList.remove("is-loading");
   }
 };
 

@@ -9,7 +9,7 @@ canvas { display: block; width: 100%; height: 100%; }
 .mode-select canvas { cursor: default; }
 .mode-select canvas.hovering { cursor: pointer; }
 
-/* --- TOOLBAR --- */
+/* --- TOOLBAR (Always Dark) --- */
 #toolbar {
     position: absolute; top: 20px; left: 340px; 
     z-index: 50; display: flex; align-items: center;
@@ -18,7 +18,6 @@ canvas { display: block; width: 100%; height: 100%; }
     border: 1px solid #444;
     box-shadow: 0 4px 10px rgba(0,0,0,0.3);
 }
-body.light-mode #toolbar { background: rgba(255,255,255,0.95); border: 1px solid #ccc; }
 
 .tool-btn {
     background: transparent; border: none; color: #888;
@@ -29,25 +28,16 @@ body.light-mode #toolbar { background: rgba(255,255,255,0.95); border: 1px solid
 .tool-btn svg { width: 20px; height: 20px; }
 .tool-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
 .tool-btn.active { background: #444; color: #fff; }
-body.light-mode .tool-btn:hover { background: rgba(0,0,0,0.05); color: #000; }
-body.light-mode .tool-btn.active { background: #ddd; color: #333; }
 
 .tool-divider { width: 1px; height: 20px; background: #555; margin: 0 6px; }
-body.light-mode .tool-divider { background: #ccc; }
 
-/* --- SIDEBAR --- */
+/* --- SIDEBAR (Always Dark) --- */
 #sidebar {
   position: absolute; top: 0; left: 0; bottom: 0; width: 280px;
   background: #252525; border-right: 1px solid #333; padding: 20px;
   overflow-y: auto; box-shadow: 4px 0 15px rgba(0,0,0,0.4); z-index: 20;
-  color: #eee; transition: background 0.3s, color 0.3s, border 0.3s;
+  color: #eee;
 }
-body.light-mode #sidebar { background: #f4f4f4; color: #333; border-right: 1px solid #ccc; }
-body.light-mode .control-group label { color: #444; }
-body.light-mode summary { color: #444; }
-body.light-mode details[open] > summary { color: #000; border-bottom: 1px solid #ccc; }
-body.light-mode details { border-bottom: 1px solid #ccc; }
-body.light-mode .theme-label { color: #333; }
 
 /* --- DETAIL BOX (Corrected Positioning) --- */
 #detail-box {
@@ -152,46 +142,37 @@ body.light-mode #legend { color: #000; }
 .shape-circle { width: 12px; height: 12px; border-radius: 50%; margin-left: 10px; border: 1px solid rgba(0,0,0,0.2); }
 .shape-diamond { width: 10px; height: 10px; transform: rotate(45deg); margin-left: 10px; margin-right: 2px; border: 1px solid rgba(0,0,0,0.2); }
 
-/* --- CONTROLS --- */
+/* --- CONTROLS (Always Dark inside Sidebar) --- */
 .control-group { margin-bottom: 15px; }
 .control-group label { display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 600; margin-bottom: 8px; color: #ccc; }
 input[type=range], input[type=number] { width: 100%; background: transparent; cursor: pointer; }
 input[type=number] { 
     background: #333; border: 1px solid #444; color: #fff; padding: 6px; border-radius: 4px; 
 }
-body.light-mode input[type=number] { background: #fff; border: 1px solid #ccc; color: #333; }
 
 /* SLIDERS */
 input[type=range] { -webkit-appearance: none; }
 input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 6px; cursor: pointer; background: #444; border-radius: 3px; border: 1px solid #222; }
 input[type=range]::-moz-range-track { width: 100%; height: 6px; cursor: pointer; background: #444; border-radius: 3px; border: 1px solid #222; }
 input[type=range]::-webkit-slider-thumb { height: 16px; width: 16px; border-radius: 50%; background: #ccc; cursor: pointer; -webkit-appearance: none; margin-top: -6px; box-shadow: 0 0 2px rgba(0,0,0,0.8); border: 1px solid #fff; }
-body.light-mode input[type=range]::-webkit-slider-runnable-track { background: #d0d0d0; border: 1px solid #bbb; }
-body.light-mode input[type=range]::-webkit-slider-thumb { border: 1px solid #333; background: #666; }
 
 /* BUTTONS */
 .btn { width: 100%; padding: 12px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; margin-bottom: 10px; font-size: 0.9rem; color: white; transition: all 0.2s; }
 .btn-action { background: #2196F3; } .btn-action:hover { background: #1E88E5; }
 .btn-clear { background: transparent; border: 1px solid #D32F2F; color: #ff8a80; margin-top: 5px; } 
 .btn-clear:hover { background: #D32F2F; color: white; }
-body.light-mode .btn-clear { border-color: #D32F2F; color: #D32F2F; }
-body.light-mode .btn-clear:hover { background: #D32F2F; color: white; }
 .btn-recalc { background: #444; border: 1px solid #555; } .btn-recalc:hover { background: #555; }
 .btn-live { background: #388E3C; border: 1px solid #2E7D32; } .btn-live:hover { background: #43A047; }
 .btn-stop { background: #C62828; border: 1px solid #B71C1C; } .btn-stop:hover { background: #D32F2F; }
 .btn-export { background: #37474F; border: 1px solid #455A64; margin-bottom: 8px; }
 .btn-export:hover { background: #455A64; }
-body.light-mode .btn-export { background: #ECEFF1; color: #333; border: 1px solid #CFD8DC; }
-body.light-mode .btn-export:hover { background: #CFD8DC; }
 
 /* TEXT AREA & FILE */
 textarea { width: 100%; height: 80px; background: #333; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px; resize: vertical; margin-bottom: 10px; font-family: monospace; font-size: 0.85rem; }
-body.light-mode textarea { background: #fff; border: 1px solid #ccc; color: #333; }
 input[type=file] { font-size: 0.8rem; color: #999; margin-bottom: 10px; width: 100%; }
 
 /* CHECKBOX ROW */
 .checkbox-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; font-size: 0.9rem; color: #ccc; }
-body.light-mode .checkbox-row { color: #444; }
 
 /* THEME TOGGLE */
 .theme-toggle-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #444; }
@@ -201,13 +182,17 @@ body.light-mode .checkbox-row { color: #444; }
 .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 2px; bottom: 2px; background-color: #888; transition: .4s; border-radius: 50%; }
 input:checked + .slider { background-color: #888; border-color: #666; }
 input:checked + .slider:before { transform: translateX(20px); background-color: #fff; }
-body.light-mode input:checked + .slider { background-color: #666; border-color: #444; }
-body.light-mode input:checked + .slider:before { background-color: #eee; }
 
 /* LOADER */
+body.is-loading #container,
+body.is-loading #sidebar,
+body.is-loading #toolbar {
+    pointer-events: none;
+    user-select: none;
+}
 #loader { 
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-    width: 300px; text-align: center; z-index: 50; 
+    width: 300px; text-align: center; z-index: 1000; 
     background: rgba(20, 20, 20, 0.95); padding: 30px; 
     border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); border: 1px solid #333;
 }

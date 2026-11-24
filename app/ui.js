@@ -15,7 +15,8 @@ window.updateActiveCounts = function () {
   const visibleSet = new Set();
 
   nodes.forEach((n) => {
-    if (n.isRogue && !VISIBILITY_STATE.Rogue) return;
+    if (n.isDummy || String(n.id).startsWith("__dummy")) return;
+    if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) return;
     if (n.color === CONFIG.visuals.colors.Transparent) return;
     vNodes++;
     visibleSet.add(n.id);
@@ -81,9 +82,13 @@ window.updateTargetCounts = function () {
 
   let found = 0;
   const counted = new Set();
-  nodes.forEach((n) => {
-    if (targetSet.has(String(n.id)) && !counted.has(String(n.id))) {
-      counted.add(String(n.id));
+  const searchPool = (RAW_DATA && Array.isArray(RAW_DATA.nodes) && RAW_DATA.nodes.length > 0) ? RAW_DATA.nodes : nodes;
+  searchPool.forEach((n) => {
+    if (!n || n.isDummy) return;
+    const id = String(n.id);
+    if (id.startsWith("__dummy")) return;
+    if (targetSet.has(id) && !counted.has(id)) {
+      counted.add(id);
       found++;
     }
   });
