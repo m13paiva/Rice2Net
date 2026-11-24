@@ -130,19 +130,6 @@ window.exportTSV = async function () {
 
     const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
 
-    // Ensure binding events are loaded for all regulation edges
-    const pendingBinds = links.filter((l) => l.has_regulates && (!l.binds || l.binds.length === 0));
-    if (pendingBinds.length > 0 && typeof window.fetchBindsForEdges === "function") {
-      const loader = document.getElementById("loader");
-      const loaderText = document.getElementById("loader-text");
-      if (loader && loaderText) {
-        loader.style.display = "block";
-        loaderText.innerText = "FETCHING BINDING EVIDENCE FOR EXPORT...";
-      }
-      await window.fetchBindsForEdges(pendingBinds);
-      if (loader) loader.style.display = "none";
-    }
-
     const headers = [
       "Source", "Target", "Weight", "IRP_score", "Directional", "Sign",
       "Motif_ID", "Motif_Source", "Matched_Sequence", "Strand",
@@ -167,7 +154,7 @@ window.exportTSV = async function () {
       const irpVal = l.irp !== undefined && l.irp !== null ? l.irp : "";
       const signVal = l.sign || "";
 
-      const hasReg = !!(l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0);
+      const hasReg = isRegActive && !!(l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0);
       const isDirectional = hasReg;
 
       if (isDirectional) {
@@ -262,18 +249,7 @@ window.exportJSON = async function () {
   try {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
 
-    // Ensure binding events are loaded for all regulation edges
-    const pendingBinds = links.filter((l) => l.has_regulates && (!l.binds || l.binds.length === 0));
-    if (pendingBinds.length > 0 && typeof window.fetchBindsForEdges === "function") {
-      const loader = document.getElementById("loader");
-      const loaderText = document.getElementById("loader-text");
-      if (loader && loaderText) {
-        loader.style.display = "block";
-        loaderText.innerText = "FETCHING BINDING EVIDENCE FOR EXPORT...";
-      }
-      await window.fetchBindsForEdges(pendingBinds);
-      if (loader) loader.style.display = "none";
-    }
+    const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
 
     const exportNodes = [];
     const visibleNodeMap = new Set();
@@ -310,6 +286,8 @@ window.exportJSON = async function () {
         const sNode = typeof l.source === "object" ? l.source : nodes.find((n) => n.id === sId);
         const tNode = typeof l.target === "object" ? l.target : nodes.find((n) => n.id === tId);
 
+        const includeReg = isRegActive && !!l.has_regulates;
+
         exportLinks.push({
           source: window.getExportNodeId && sNode ? window.getExportNodeId(sNode) : sId,
           target: window.getExportNodeId && tNode ? window.getExportNodeId(tNode) : tId,
@@ -317,9 +295,9 @@ window.exportJSON = async function () {
           irp: l.irp !== undefined && l.irp !== null ? l.irp : 0,
           sign: l.sign || null,
           has_interacts: l.has_interacts !== false,
-          has_regulates: !!l.has_regulates,
-          directions: l.has_regulates ? l.directions : null,
-          binds: l.has_regulates ? (l.binds || []) : [],
+          has_regulates: includeReg,
+          directions: includeReg ? l.directions : null,
+          binds: includeReg ? (l.binds || []) : [],
         });
       }
     });

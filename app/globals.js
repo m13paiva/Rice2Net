@@ -59,6 +59,7 @@ let VISIBILITY_STATE = {
   EdgeBoth: 0,
   EdgeReg: 0,
 };
+window.VISIBILITY_STATE = VISIBILITY_STATE;
 
 let HAS_LOADED_REGULATES = false;
 
