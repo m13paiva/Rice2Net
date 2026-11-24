@@ -124,12 +124,31 @@ function initExportControls() {
 /**
  * Exports visible network edges to a Tab-Separated Values (TSV) file.
  */
-window.exportTSV = function () {
+window.exportTSV = async function () {
   try {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
 
     const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
-    const rows = ["Source\tTarget\tWeight\tIRP_score\tDirectional"];
+
+    // Ensure binding events are loaded for all regulation edges
+    const pendingBinds = links.filter((l) => l.has_regulates && (!l.binds || l.binds.length === 0));
+    if (pendingBinds.length > 0 && typeof window.fetchBindsForEdges === "function") {
+      const loader = document.getElementById("loader");
+      const loaderText = document.getElementById("loader-text");
+      if (loader && loaderText) {
+        loader.style.display = "block";
+        loaderText.innerText = "FETCHING BINDING EVIDENCE FOR EXPORT...";
+      }
+      await window.fetchBindsForEdges(pendingBinds);
+      if (loader) loader.style.display = "none";
+    }
+
+    const headers = [
+      "Source", "Target", "Weight", "IRP_score", "Directional", "Sign",
+      "Motif_ID", "Motif_Source", "Matched_Sequence", "Strand",
+      "Start", "Stop", "Score", "P_value", "Q_value", "Occurrence"
+    ];
+    const rows = [headers.join("\t")];
     let exportedCount = 0;
 
     links.forEach((l) => {
@@ -144,10 +163,12 @@ window.exportTSV = function () {
       if ((sNode.isRogue && !VISIBILITY_STATE.Rogue) || sNode.color === CONFIG.visuals.colors.Transparent) return;
       if ((tNode.isRogue && !VISIBILITY_STATE.Rogue) || tNode.color === CONFIG.visuals.colors.Transparent) return;
 
-      const weight = l.weight !== undefined ? l.weight : l.value || l.w || "1";
+      const weight = l.weight !== undefined ? l.weight : (l.value || l.w || "1");
       const irpVal = l.irp !== undefined && l.irp !== null ? l.irp : "";
+      const signVal = l.sign || "";
 
-      const isDirectional = isRegActive && !!l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0;
+      const hasReg = !!(l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0);
+      const isDirectional = hasReg;
 
       if (isDirectional) {
         l.directions.forEach((dir) => {
@@ -161,8 +182,44 @@ window.exportTSV = function () {
 
           if (!sOut || !tOut) return;
 
-          rows.push(`${sOut}\t${tOut}\t${weight}\t${irpVal}\ttrue`);
-          exportedCount++;
+          const dirBinds = (dir.binds && dir.binds.length > 0)
+            ? dir.binds
+            : ((l.binds && l.binds.length > 0) ? l.binds : []);
+
+          if (dirBinds.length > 0) {
+            dirBinds.forEach((b) => {
+              rows.push([
+                sOut,
+                tOut,
+                weight,
+                irpVal,
+                "true",
+                signVal,
+                b.motif_id || "-",
+                b.motif_source || "-",
+                b.matched_sequence || "-",
+                b.strand || "-",
+                b.start !== undefined && b.start !== null ? b.start : "-",
+                b.stop !== undefined && b.stop !== null ? b.stop : "-",
+                b.score !== undefined && b.score !== null ? b.score : "-",
+                b.p_value !== undefined && b.p_value !== null ? b.p_value : "-",
+                b.q_value !== undefined && b.q_value !== null ? b.q_value : "-",
+                b.occurrence !== undefined && b.occurrence !== null ? b.occurrence : "-",
+              ].join("\t"));
+              exportedCount++;
+            });
+          } else {
+            rows.push([
+              sOut,
+              tOut,
+              weight,
+              irpVal,
+              "true",
+              signVal,
+              "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"
+            ].join("\t"));
+            exportedCount++;
+          }
         });
       } else {
         const sOut = window.getExportNodeId ? window.getExportNodeId(sNode) : sId;
@@ -170,7 +227,15 @@ window.exportTSV = function () {
 
         if (!sOut || !tOut) return;
 
-        rows.push(`${sOut}\t${tOut}\t${weight}\t${irpVal}\tfalse`);
+        rows.push([
+          sOut,
+          tOut,
+          weight,
+          irpVal,
+          "false",
+          signVal,
+          "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"
+        ].join("\t"));
         exportedCount++;
       }
     });
@@ -193,11 +258,23 @@ window.exportTSV = function () {
 /**
  * Exports visible nodes and links to a JSON layout structure file.
  */
-window.exportJSON = function () {
+window.exportJSON = async function () {
   try {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
 
-    const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
+    // Ensure binding events are loaded for all regulation edges
+    const pendingBinds = links.filter((l) => l.has_regulates && (!l.binds || l.binds.length === 0));
+    if (pendingBinds.length > 0 && typeof window.fetchBindsForEdges === "function") {
+      const loader = document.getElementById("loader");
+      const loaderText = document.getElementById("loader-text");
+      if (loader && loaderText) {
+        loader.style.display = "block";
+        loaderText.innerText = "FETCHING BINDING EVIDENCE FOR EXPORT...";
+      }
+      await window.fetchBindsForEdges(pendingBinds);
+      if (loader) loader.style.display = "none";
+    }
+
     const exportNodes = [];
     const visibleNodeMap = new Set();
 
@@ -206,12 +283,17 @@ window.exportJSON = function () {
       visibleNodeMap.add(n.id);
       exportNodes.push({
         id: window.getExportNodeId ? window.getExportNodeId(n) : n.id,
+        rap_id: n.id,
+        symbol: n.symbol || (n.metadata && (n.metadata.Symbol || n.metadata.symbol)) || "",
+        identifier: n.identifier || (n.metadata && (n.metadata.Identifier || n.metadata.identifier)) || "",
+        msu_id: n.msu_id || (n.metadata && (n.metadata.MSU_ID || n.metadata.msu_id)) || "",
         x: Math.round(n.x * 100) / 100,
         y: Math.round(n.y * 100) / 100,
-        deg: n.deg,
-        originalType: n.originalType,
+        r: n.r,
+        deg: n.deg !== undefined && n.deg !== null ? n.deg : 0,
+        originalType: n.originalType || "Gene",
+        sign: n.sign || (n.metadata && n.metadata.Sign) || null,
         isRogue: !!n.isRogue,
-        symbol: n.symbol,
       });
     });
 
@@ -231,14 +313,13 @@ window.exportJSON = function () {
         exportLinks.push({
           source: window.getExportNodeId && sNode ? window.getExportNodeId(sNode) : sId,
           target: window.getExportNodeId && tNode ? window.getExportNodeId(tNode) : tId,
-          weight: l.weight !== undefined ? l.weight : l.value || 1,
-          irp: l.irp || 0,
-          has_interacts: l.has_interacts,
-          has_regulates: isRegActive ? !!l.has_regulates : false,
-          matched_sequence: l.matched_sequence,
-          p_value: l.p_value,
-          q_value: l.q_value,
-          score: l.score,
+          weight: l.weight !== undefined ? l.weight : (l.value || 1),
+          irp: l.irp !== undefined && l.irp !== null ? l.irp : 0,
+          sign: l.sign || null,
+          has_interacts: l.has_interacts !== false,
+          has_regulates: !!l.has_regulates,
+          directions: l.has_regulates ? l.directions : null,
+          binds: l.has_regulates ? (l.binds || []) : [],
         });
       }
     });
@@ -289,7 +370,7 @@ window.exportGenesTSV = async function () {
       const batch = exportNodes.slice(i, i + batchSize);
       await Promise.all(batch.map(async (n) => {
         try {
-          const res = await fetch(`/api/network/node/${encodeURIComponent(n.id)}`);
+          const res = await fetch(`${typeof API_BASE !== "undefined" ? API_BASE : ""}/api/network/node/${encodeURIComponent(n.id)}`);
           if (res.ok) {
             n.dbData = await res.json();
           }
@@ -307,7 +388,7 @@ window.exportGenesTSV = async function () {
     }
 
     const headers = [
-      "Gene_ID", "Type", "Visual_Label", "Symbol", "MSU_ID", "Identifier",
+      "Gene_ID", "Type", "Visual_Label", "Symbol", "MSU_ID", "Identifier", "Sign",
       "Full_Name", "KEGG_Gene", "TF_Transcripts", "TF_Family", "GO_Terms",
       "KEGG_Pathways", "MapMan_Bins", "Uniprot_Entries"
     ];
@@ -320,9 +401,10 @@ window.exportGenesTSV = async function () {
 
       const d = n.dbData || {};
 
-      row.push(d.symbol || "");
-      row.push(d.msu_id || "");
-      row.push(d.identifier || "");
+      row.push(d.symbol || n.symbol || "");
+      row.push(d.msu_id || n.msu_id || "");
+      row.push(n.identifier || d.identifier || "");
+      row.push(n.sign || (n.metadata && n.metadata.Sign) || d.sign || "");
       row.push(d.full_name || "");
       row.push(d.kegg_gene || "");
 

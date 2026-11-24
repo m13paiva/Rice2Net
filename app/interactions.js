@@ -159,6 +159,9 @@ function onMouseMoveSelect(event) {
         if (isRegActive && edge.has_regulates && edge.clicked_src && edge.clicked_tgt) {
             ttext = `${edge.clicked_src} &rarr; ${edge.clicked_tgt}`;
         }
+        if (edge.sign) {
+          ttext += ` [${edge.sign}]`;
+        }
 
         canvas.classList.add("hovering");
         tooltip.style.display = "flex";
@@ -186,12 +189,12 @@ function onMouseMoveSelect(event) {
  * @returns {string} Formatted node display string.
  */
 function getNodeDisplayText(node) {
-  const identifier = (node && (node.identifier || (node.metadata && node.metadata.identifier)));
-  if (identifier && identifier.trim() !== "" && identifier !== ".") return identifier;
+  const identifier = node && (node.identifier || (node.metadata && (node.metadata.Identifier || node.metadata.identifier)));
+  if (identifier && identifier.trim() !== "" && identifier !== "." && identifier !== "-" && identifier.toLowerCase() !== "null") return identifier;
 
-  const rawSymbol = (node && (node.symbol || (node.metadata && node.metadata.symbol))) || "";
+  const rawSymbol = (node && (node.symbol || (node.metadata && (node.metadata.Symbol || node.metadata.symbol)))) || "";
   const symbol = String(rawSymbol).trim();
-  if (!symbol || symbol === "." || symbol === node.id) return node.id;
+  if (!symbol || symbol === "." || symbol === "-" || symbol === node.id || symbol.toLowerCase() === "null") return node.id;
   return `${symbol} (${node.id})`;
 }
 
@@ -306,11 +309,15 @@ window.showEdgeDetails = async function (edge) {
 
   const weight = edge.weight !== undefined ? edge.weight : "1";
   const irp = edge.irp !== undefined && edge.irp !== null ? edge.irp : "-";
+  const signRow = edge.sign
+    ? `<div class="detail-row"><div class="detail-label">Sign</div><div class="detail-value">${edge.sign === "+" ? "+ (Positive)" : edge.sign === "-" ? "- (Negative)" : edge.sign}</div></div>`
+    : "";
 
   if (isThisRegActive) {
     detailContent.innerHTML = `
       <div class="detail-row" style="margin-top: 15px;"><div class="detail-label">Weight</div><div class="detail-value">${weight}</div></div>
       <div class="detail-row"><div class="detail-label">IRP Score</div><div class="detail-value">${irp}</div></div>
+      ${signRow}
       <div id="binds-container" style="margin-top: 15px;"></div>
     `;
 
@@ -318,10 +325,31 @@ window.showEdgeDetails = async function (edge) {
     bindsContainer.innerHTML = `<div style="text-align:center; padding:10px; color:#aaa;">Fetching detailed binding events...</div>`;
 
     try {
-      const response = await fetch(`/api/network/edges/binds?source=${encodeURIComponent(reqSource)}&target=${encodeURIComponent(reqTarget)}`);
+      const edgeDirections = (edge.has_regulates && Array.isArray(edge.directions)) ? edge.directions : [];
+      const matchedDir = edgeDirections.find(d => d.src === reqSource && d.tgt === reqTarget);
 
-      if (!response.ok) throw new Error("Failed to fetch binds");
-      const { binds } = await response.json();
+      let binds = null;
+      if (matchedDir && Array.isArray(matchedDir.binds) && matchedDir.binds.length > 0) {
+        binds = matchedDir.binds;
+      } else if (Array.isArray(edge.binds) && edge.binds.length > 0) {
+        binds = edge.binds;
+      }
+
+      if (binds === null) {
+        const apiBase = typeof API_BASE !== "undefined" ? API_BASE : "";
+        const response = await fetch(`${apiBase}/api/network/edges/binds?source=${encodeURIComponent(reqSource)}&target=${encodeURIComponent(reqTarget)}`);
+
+        if (!response.ok) throw new Error("Failed to fetch binds");
+        const data = await response.json();
+        binds = data.binds || [];
+        if (matchedDir) matchedDir.binds = binds;
+        if (!edge.binds) edge.binds = [];
+        binds.forEach(b => {
+          if (!edge.binds.some(eb => eb.motif_id === b.motif_id && eb.start === b.start && eb.strand === b.strand)) {
+            edge.binds.push(b);
+          }
+        });
+      }
 
       if (binds && binds.length > 0) {
 
@@ -445,6 +473,7 @@ window.showEdgeDetails = async function (edge) {
     detailContent.innerHTML = `
       <div class="detail-row" style="margin-top: 15px;"><div class="detail-label">Weight</div><div class="detail-value">${weight}</div></div>
       <div class="detail-row"><div class="detail-label">IRP Score</div><div class="detail-value">${irp}</div></div>
+      ${signRow}
     `;
   }
 };
@@ -472,13 +501,21 @@ async function showNodeDetails(node) {
   document.getElementById("tooltip").style.display = "none";
 
   try {
-    const response = await fetch(`/api/network/node/${encodeURIComponent(node.id)}`);
+    const apiBase = typeof API_BASE !== "undefined" ? API_BASE : "";
+    const response = await fetch(`${apiBase}/api/network/node/${encodeURIComponent(node.id)}`);
     if (response.ok) {
       const dbData = await response.json();
       if (!node.metadata) node.metadata = {};
       node.metadata["RAP_ID"] = node.id;
       if (dbData.msu_id) node.metadata["MSU_ID"] = dbData.msu_id;
-      if (dbData.identifier) node.identifier = dbData.identifier;
+      if (dbData.identifier) {
+        node.identifier = dbData.identifier;
+        node.metadata["Identifier"] = dbData.identifier;
+      }
+      if (dbData.sign) {
+        node.sign = dbData.sign;
+        node.metadata["Sign"] = dbData.sign;
+      }
       if (dbData.kegg_gene) node.kegg_gene = dbData.kegg_gene;
       if (dbData.full_name) node.metadata["Description"] = dbData.full_name;
 
@@ -517,9 +554,19 @@ async function showNodeDetails(node) {
     }
   }
 
+  const geneIdentifier = node.identifier || (node.metadata && (node.metadata["Identifier"] || node.metadata["identifier"])) || "-";
+  if (geneIdentifier !== "-" && geneIdentifier !== node.id) {
+    html += `<div class="detail-row"><div class="detail-label">Identifier</div><div class="detail-value">${geneIdentifier}</div></div>`;
+  }
+
   const msuId = node.msu_id || (node.metadata && node.metadata["MSU_ID"]) || "-";
   html += `<div class="detail-row"><div class="detail-label">MSU ID</div><div class="detail-value">${msuId}</div></div>`;
   html += `<div class="detail-row"><div class="detail-label">RAP-DB ID</div><div class="detail-value">${node.id}</div></div>`;
+
+  const nodeSign = node.sign || (node.metadata && node.metadata["Sign"]);
+  if (nodeSign) {
+    html += `<div class="detail-row"><div class="detail-label">Sign</div><div class="detail-value">${nodeSign === "+" ? "+ (Positive)" : nodeSign === "-" ? "- (Negative)" : nodeSign}</div></div>`;
+  }
 
   html += `<div style="width: 100%; height: 1px; background-color: #444; margin: 15px 0;"></div>`;
 

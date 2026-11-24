@@ -52,6 +52,7 @@ window.reapplyColors = function () {
   // Evaluate visual properties for each node
   nodes.forEach((n) => {
     const deg = nodeDegrees.get(n.id) || 0;
+    n.deg = deg;
     n.isRogue = deg === 0;
 
     const baseSpec = window.getTypeVisualSpec
@@ -155,6 +156,7 @@ window.reapplyColors = function () {
     }
   });
 
+  if (typeof updateVisualProps === "function") updateVisualProps();
   window.updateTargetCounts();
   if (typeof window.updateActiveCounts === "function") window.updateActiveCounts();
   requestAnimationFrame(window.draw);

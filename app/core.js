@@ -43,19 +43,59 @@ window.importJSON = function (input) {
         RAW_DATA.nodes = json.nodes;
         RAW_DATA.links = json.edges;
 
-        nodes = json.nodes.map((n) => ({ ...n }));
-        const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
+        nodes = json.nodes.map((n) => {
+          const nodeObj = {
+            ...n,
+            identifier: n.identifier || (n.metadata && (n.metadata.Identifier || n.metadata.identifier)) || "",
+            symbol: n.symbol || (n.metadata && (n.metadata.Symbol || n.metadata.symbol)) || "",
+            msu_id: n.msu_id || (n.metadata && (n.metadata.MSU_ID || n.metadata.msu_id)) || "",
+            originalType: n.originalType || n.type || "Gene",
+            sign: n.sign || (n.metadata && n.metadata.Sign) || null,
+            deg: n.deg !== undefined && n.deg !== null ? n.deg : 0,
+          };
+          if (typeof window.applyNodeTypeStyling === "function") {
+            window.applyNodeTypeStyling(nodeObj);
+          }
+          return nodeObj;
+        });
+        const nodeMap = new Map();
+        nodes.forEach((n) => {
+          nodeMap.set(String(n.id), n);
+          if (n.rap_id) nodeMap.set(String(n.rap_id), n);
+          if (n.msu_id) {
+            nodeMap.set(String(n.msu_id), n);
+            nodeMap.set(String(n.msu_id).replace(/\.\d+$/, ""), n);
+          }
+        });
 
         document.getElementById("loader-text").innerText = "LOADING JSON... 50%";
         if (progressBar) progressBar.style.width = "50%";
 
         links = json.edges
-          .map((e) => ({
-            source: nodeMap.get(String(e.source.id || e.source)),
-            target: nodeMap.get(String(e.target.id || e.target)),
-            weight: e.weight || 1,
-          }))
-          .filter((l) => l.source && l.target);
+          .map((e) => {
+            const sId = String(e.source?.id || e.source);
+            const tId = String(e.target?.id || e.target);
+            const sNode = nodeMap.get(sId);
+            const tNode = nodeMap.get(tId);
+            if (!sNode || !tNode) return null;
+
+            return {
+              source: sNode,
+              target: tNode,
+              weight: e.weight !== undefined ? e.weight : (e.value || 1),
+              irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
+              sign: e.sign || null,
+              has_interacts: e.has_interacts !== false,
+              has_regulates: !!e.has_regulates,
+              directions: e.directions || (e.has_regulates ? [{ src: String(sNode.id), tgt: String(tNode.id) }] : null),
+              binds: e.binds || null,
+              reg_matched: !!e.has_regulates,
+            };
+          })
+          .filter(Boolean);
+
+        RAW_DATA.workingNodes = nodes;
+        RAW_DATA.workingLinks = links;
 
         await window.__APP_CORE__.hydrateMetadata();
         RAW_DATA.adjacency = window.__APP_CORE__.buildAdjacency(nodes, links);
@@ -106,27 +146,124 @@ window.importEdges = function (input) {
       if (jsonInfo) jsonInfo.style.display = 'none';
 
       const text = e.target.result;
-      const lines = text.split(/\r?\n/);
+      const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
 
-      const newEdges = [];
+      const edgeMap = new Map();
       const nodeSet = new Set();
 
-      lines.forEach((line) => {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length < 2) return;
-        if (parts[0].toLowerCase() === "source") return;
+      let colMap = {
+        source: 0,
+        target: 1,
+        weight: 2,
+        irp: -1,
+        directional: -1,
+        sign: -1,
+        motif_id: -1,
+        motif_source: -1,
+        matched_sequence: -1,
+        strand: -1,
+        start: -1,
+        stop: -1,
+        score: -1,
+        p_value: -1,
+        q_value: -1,
+        occurrence: -1,
+      };
 
-        const s = parts[0];
-        const t = parts[1];
+      let startIdx = 0;
+      if (lines.length > 0 && lines[0].toLowerCase().includes("source")) {
+        const headerParts = lines[0].trim().split(/\t/).map((h) => h.trim().toLowerCase());
+        headerParts.forEach((h, idx) => {
+          if (h === "source") colMap.source = idx;
+          else if (h === "target") colMap.target = idx;
+          else if (h === "weight") colMap.weight = idx;
+          else if (h === "irp_score" || h === "irp") colMap.irp = idx;
+          else if (h === "directional") colMap.directional = idx;
+          else if (h === "sign") colMap.sign = idx;
+          else if (h === "motif_id") colMap.motif_id = idx;
+          else if (h === "motif_source") colMap.motif_source = idx;
+          else if (h === "matched_sequence") colMap.matched_sequence = idx;
+          else if (h === "strand") colMap.strand = idx;
+          else if (h === "start") colMap.start = idx;
+          else if (h === "stop") colMap.stop = idx;
+          else if (h === "score") colMap.score = idx;
+          else if (h === "p_value") colMap.p_value = idx;
+          else if (h === "q_value") colMap.q_value = idx;
+          else if (h === "occurrence") colMap.occurrence = idx;
+        });
+        startIdx = 1;
+      }
+
+      for (let i = startIdx; i < lines.length; i++) {
+        const parts = lines[i].trim().split(/\t/);
+        if (parts.length < 2) continue;
+
+        const s = parts[colMap.source] ? parts[colMap.source].trim() : parts[0].trim();
+        const t = parts[colMap.target] ? parts[colMap.target].trim() : parts[1].trim();
+        if (!s || !t) continue;
+
         let w = 1;
-        if (parts.length >= 3 && !isNaN(parseFloat(parts[2]))) {
+        if (colMap.weight !== -1 && parts[colMap.weight] !== undefined) {
+          const parsedW = parseFloat(parts[colMap.weight]);
+          if (!isNaN(parsedW)) w = parsedW;
+        } else if (parts.length >= 3 && !isNaN(parseFloat(parts[2]))) {
           w = parseFloat(parts[2]);
         }
 
-        newEdges.push({ source: s, target: t, weight: w });
+        let irp = null;
+        if (colMap.irp !== -1 && parts[colMap.irp] !== undefined) {
+          const parsedIRP = parseFloat(parts[colMap.irp]);
+          if (!isNaN(parsedIRP)) irp = parsedIRP;
+        }
+
+        let sign = null;
+        if (colMap.sign !== -1 && parts[colMap.sign] !== undefined) {
+          const rawSign = parts[colMap.sign].trim();
+          if (rawSign === "+" || rawSign === "-") sign = rawSign;
+        }
+
+        let isDirectional = false;
+        if (colMap.directional !== -1 && parts[colMap.directional] !== undefined) {
+          isDirectional = parts[colMap.directional].trim().toLowerCase() === "true";
+        }
+
+        const edgeKey = `${s}->${t}`;
+        if (!edgeMap.has(edgeKey)) {
+          edgeMap.set(edgeKey, {
+            source: s,
+            target: t,
+            weight: w,
+            irp: irp,
+            sign: sign,
+            has_interacts: true,
+            has_regulates: isDirectional,
+            directions: isDirectional ? [{ src: s, tgt: t }] : null,
+            binds: [],
+            reg_matched: isDirectional,
+          });
+        }
+
+        const edgeEntry = edgeMap.get(edgeKey);
+        if (colMap.motif_id !== -1 && parts[colMap.motif_id] && parts[colMap.motif_id] !== "-") {
+          edgeEntry.binds.push({
+            motif_id: parts[colMap.motif_id] || "",
+            motif_source: colMap.motif_source !== -1 ? parts[colMap.motif_source] || "" : "",
+            matched_sequence: colMap.matched_sequence !== -1 ? parts[colMap.matched_sequence] || "" : "",
+            strand: colMap.strand !== -1 ? parts[colMap.strand] || "" : "",
+            start: colMap.start !== -1 && !isNaN(parseInt(parts[colMap.start], 10)) ? parseInt(parts[colMap.start], 10) : null,
+            stop: colMap.stop !== -1 && !isNaN(parseInt(parts[colMap.stop], 10)) ? parseInt(parts[colMap.stop], 10) : null,
+            score: colMap.score !== -1 && !isNaN(parseFloat(parts[colMap.score])) ? parseFloat(parts[colMap.score]) : null,
+            p_value: colMap.p_value !== -1 && !isNaN(parseFloat(parts[colMap.p_value])) ? parseFloat(parts[colMap.p_value]) : null,
+            q_value: colMap.q_value !== -1 && !isNaN(parseFloat(parts[colMap.q_value])) ? parseFloat(parts[colMap.q_value]) : null,
+            occurrence: colMap.occurrence !== -1 && !isNaN(parseInt(parts[colMap.occurrence], 10)) ? parseInt(parts[colMap.occurrence], 10) : null,
+          });
+        }
+
         nodeSet.add(s);
         nodeSet.add(t);
-      });
+      }
+
+      const newEdges = Array.from(edgeMap.values());
 
       if (newEdges.length === 0) {
         alert("No valid edges found.");
@@ -147,11 +284,20 @@ window.importEdges = function (input) {
           source: nodeMap.get(String(e.source)),
           target: nodeMap.get(String(e.target)),
           weight: e.weight,
+          irp: e.irp,
+          sign: e.sign,
+          has_interacts: e.has_interacts,
+          has_regulates: e.has_regulates,
+          directions: e.directions,
+          binds: e.binds && e.binds.length > 0 ? e.binds : null,
+          reg_matched: e.reg_matched,
         }))
         .filter((l) => l.source && l.target);
 
       RAW_DATA.nodes = nodes;
       RAW_DATA.links = newEdges;
+      RAW_DATA.workingNodes = nodes;
+      RAW_DATA.workingLinks = links;
       RAW_DATA.adjacency = window.__APP_CORE__.buildAdjacency(nodes, links);
 
       await window.__APP_CORE__.hydrateMetadata();
@@ -486,6 +632,13 @@ function finishSetup(resetParams) {
     document.getElementById("viz-size-mult").value = "0.8";
     document.getElementById("viz-edge-width").value = "0.1";
     document.getElementById("viz-edge-alpha").value = "0.15";
+  } else if (resetParams) {
+    document.getElementById("phys-radial").value = "0.1";
+    document.getElementById("phys-repulsion").value = "300";
+    document.getElementById("viz-base-size").value = "2";
+    document.getElementById("viz-size-mult").value = "2.5";
+    document.getElementById("viz-edge-width").value = "0.3";
+    document.getElementById("viz-edge-alpha").value = "0.5";
   }
 
   calculateDegrees();

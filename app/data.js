@@ -84,10 +84,12 @@ window.applyEdgeFilter = function () {
       source: nodeMap.get(String(l.source?.id || l.source)),
       target: nodeMap.get(String(l.target?.id || l.target)),
       weight: l.weight,
-      irp: l.irp,
+      irp: l.irp !== undefined && l.irp !== null ? l.irp : null,
+      sign: l.sign || null,
       has_interacts: l.has_interacts !== undefined ? l.has_interacts : true,
       has_regulates: l.has_regulates || false,
       directions: l.directions || null,
+      binds: l.binds || null,
       reg_matched: l.reg_matched || false
     }));
 
@@ -113,6 +115,7 @@ window.applyEdgeFilter = function () {
 
   nodes = sourceNodes.filter((n) => {
     const deg = counts.get(String(n.id)) || 0;
+    n.deg = deg;
     if (deg > 0) {
       n.isRogue = false;
       return true;
@@ -126,6 +129,8 @@ window.applyEdgeFilter = function () {
     }
     return false;
   });
+
+  if (typeof updateVisualProps === "function") updateVisualProps();
 
   window.IS_FILTERED_NETWORK = (nodes.length < RAW_DATA.nodes.length) || isTargeted || threshold > 0;
   window.updateClusterAvailability();
@@ -201,7 +206,7 @@ window.fetchRegulationEdges = async function () {
       }));
 
       const response = await fetch(
-        "/api/network/edges/regulates",
+        `${typeof API_BASE !== "undefined" ? API_BASE : ""}/api/network/edges/regulates`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -245,12 +250,103 @@ window.fetchRegulationEdges = async function () {
       await new Promise((r) => setTimeout(r, 30));
     }
 
+    // Fetch supporting binding events for all visible regulation edges
+    const regEdges = links.filter((l) => l.has_regulates && (!l.binds || l.binds.length === 0));
+    if (regEdges.length > 0) {
+      if (loaderText) loaderText.innerText = "FETCHING BINDING EVIDENCE...";
+      await window.fetchBindsForEdges(regEdges);
+    }
+
     if (typeof window.draw === "function") requestAnimationFrame(window.draw);
 
   } catch (e) {
     alert(`Regulation data request failed: ${e.message}`);
   } finally {
     if (loader) loader.style.display = "none";
+  }
+};
+
+/**
+ * Fetches motif binding events supporting regulation relations for an array of edges.
+ * @param {Array<Object>} edgesToFetch - Edge link objects with has_regulates = true.
+ */
+window.fetchBindsForEdges = async function (edgesToFetch) {
+  if (!edgesToFetch || edgesToFetch.length === 0) return;
+
+  const pairsToQuery = [];
+  const pairMap = new Map();
+
+  edgesToFetch.forEach((edge) => {
+    if (!edge.has_regulates || !Array.isArray(edge.directions)) return;
+    edge.directions.forEach((dir) => {
+      if (!dir.src || !dir.tgt) return;
+      const key = `${dir.src}->${dir.tgt}`;
+      if (!pairMap.has(key)) {
+        pairMap.set(key, []);
+        pairsToQuery.push({ source: dir.src, target: dir.tgt });
+      }
+      pairMap.get(key).push({ edge, dir });
+    });
+  });
+
+  if (pairsToQuery.length === 0) return;
+
+  const apiBase = typeof API_BASE !== "undefined" ? API_BASE : "";
+  const batchSize = 100;
+
+  for (let i = 0; i < pairsToQuery.length; i += batchSize) {
+    const batch = pairsToQuery.slice(i, i + batchSize);
+    try {
+      const response = await fetch(`${apiBase}/api/network/edges/binds`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pairs: batch }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const bindsByPair = data.bindsByPair || {};
+
+        batch.forEach((pair) => {
+          const key = `${pair.source}->${pair.target}`;
+          const binds = bindsByPair[key] || [];
+          const targets = pairMap.get(key) || [];
+          targets.forEach(({ edge, dir }) => {
+            dir.binds = binds;
+            if (!edge.binds) edge.binds = [];
+            binds.forEach((b) => {
+              if (!edge.binds.some((eb) => eb.motif_id === b.motif_id && eb.start === b.start && eb.strand === b.strand)) {
+                edge.binds.push(b);
+              }
+            });
+          });
+        });
+      } else {
+        await Promise.all(
+          batch.map(async (pair) => {
+            try {
+              const res = await fetch(`${apiBase}/api/network/edges/binds?source=${encodeURIComponent(pair.source)}&target=${encodeURIComponent(pair.target)}`);
+              if (res.ok) {
+                const { binds } = await res.json();
+                const key = `${pair.source}->${pair.target}`;
+                const targets = pairMap.get(key) || [];
+                targets.forEach(({ edge, dir }) => {
+                  dir.binds = binds || [];
+                  if (!edge.binds) edge.binds = [];
+                  (binds || []).forEach((b) => {
+                    if (!edge.binds.some((eb) => eb.motif_id === b.motif_id && eb.start === b.start && eb.strand === b.strand)) {
+                      edge.binds.push(b);
+                    }
+                  });
+                });
+              }
+            } catch (e) {}
+          })
+        );
+      }
+    } catch (e) {
+      console.warn("fetchBindsForEdges error:", e);
+    }
   }
 };
 
@@ -266,7 +362,7 @@ async function loadClusters() {
   CLUSTER_STATE.data.clear();
 
   try {
-    const response = await fetch("/api/network/clusters");
+    const response = await fetch(`${typeof API_BASE !== "undefined" ? API_BASE : ""}/api/network/clusters`);
     if (!response.ok) throw new Error("Failed to fetch clusters from API");
 
     const data = await response.json();
@@ -302,7 +398,10 @@ async function hydrateMetadata() {
   if (RAW_DATA.dbNodes) {
     RAW_DATA.dbNodes.forEach(n => {
       dbMap.set(String(n.id), n);
-      if (n.msu_id) dbMap.set(String(n.msu_id).replace(/\.\d+$/, ""), n);
+      if (n.msu_id) {
+        dbMap.set(String(n.msu_id), n);
+        dbMap.set(String(n.msu_id).replace(/\.\d+$/, ""), n);
+      }
       if (n.identifier) dbMap.set(String(n.identifier), n);
       if (n.symbol && n.symbol !== ".") dbMap.set(String(n.symbol), n);
     });
@@ -320,12 +419,23 @@ async function hydrateMetadata() {
       const dbInfo = dbMap.get(stringId);
       n.originalType = dbInfo.originalType || n.originalType;
       n.symbol = dbInfo.symbol || n.symbol;
-      if (dbInfo.msu_id) n.metadata["MSU_ID"] = dbInfo.msu_id;
+      if (dbInfo.msu_id) {
+        n.msu_id = n.msu_id || dbInfo.msu_id;
+        n.metadata["MSU_ID"] = dbInfo.msu_id;
+      }
       if (dbInfo.identifier) {
-        n.identifier = dbInfo.identifier;
+        n.identifier = n.identifier || dbInfo.identifier;
         n.metadata["Identifier"] = dbInfo.identifier;
       }
+      if (dbInfo.sign) {
+        n.sign = n.sign || dbInfo.sign;
+        n.metadata["Sign"] = dbInfo.sign;
+      }
     }
+
+    if (n.identifier) n.metadata["Identifier"] = n.identifier;
+    if (n.msu_id) n.metadata["MSU_ID"] = n.msu_id;
+    if (n.sign) n.metadata["Sign"] = n.sign;
 
     if (window.applyNodeTypeStyling) window.applyNodeTypeStyling(n);
   });
@@ -341,6 +451,9 @@ function cacheMetaSnapshot() {
       {
         originalType: n.originalType || "Gene",
         symbol: n.symbol || "",
+        identifier: n.identifier || (n.metadata && n.metadata.Identifier) || "",
+        msu_id: n.msu_id || (n.metadata && n.metadata.MSU_ID) || "",
+        sign: n.sign || (n.metadata && n.metadata.Sign) || null,
         metadata: n.metadata ? { ...n.metadata } : {},
         tfDetail: Array.isArray(n.tfDetail) ? n.tfDetail.map((x) => ({ ...x })) : [],
         keggDetail: Array.isArray(n.keggDetail) ? n.keggDetail.map((x) => ({ ...x })) : [],
@@ -388,7 +501,7 @@ async function main() {
   await new Promise(r => setTimeout(r, 50));
 
   try {
-    const response = await fetch("/api/network/init");
+    const response = await fetch(`${typeof API_BASE !== "undefined" ? API_BASE : ""}/api/network/init`);
     if (!response.ok) throw new Error("API connection failed");
 
     const graphData = await response.json();
@@ -419,8 +532,12 @@ async function main() {
       n.keggDetail = [];
       n.tfDetail = [];
       n.originalType = n.originalType || "Gene";
+      n.identifier = n.identifier || "";
+      n.sign = n.sign || null;
 
       if (n.msu_id) n.metadata["MSU_ID"] = n.msu_id;
+      if (n.identifier) n.metadata["Identifier"] = n.identifier;
+      if (n.sign) n.metadata["Sign"] = n.sign;
 
       if (window.applyNodeTypeStyling) window.applyNodeTypeStyling(n);
     });
@@ -433,9 +550,12 @@ async function main() {
         source: nodeMap.get(String(e.source?.id || e.source)),
         target: nodeMap.get(String(e.target?.id || e.target)),
         weight: e.weight || e.value || 1,
-        irp: e.irp,
+        irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
+        sign: e.sign || null,
         has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
         has_regulates: e.has_regulates || false,
+        directions: e.directions || null,
+        binds: e.binds || null,
         reg_matched: false
       }))
       .filter((l) => l.source && l.target);
