@@ -432,6 +432,13 @@ function finishSetup(resetParams) {
     document.getElementById("viz-size-mult").value = "0.8";
     document.getElementById("viz-edge-width").value = "0.1";
     document.getElementById("viz-edge-alpha").value = "0.15";
+  } else if (resetParams) {
+    document.getElementById("phys-radial").value = "0.1";
+    document.getElementById("phys-repulsion").value = "300";
+    document.getElementById("viz-base-size").value = "2";
+    document.getElementById("viz-size-mult").value = "2.5";
+    document.getElementById("viz-edge-width").value = "0.3";
+    document.getElementById("viz-edge-alpha").value = "0.5";
   }
 
   calculateDegrees();

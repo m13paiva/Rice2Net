@@ -118,7 +118,7 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
     .run(
       `
       MATCH (n:Gene)
-      RETURN n.id as id, n.x as x, n.y as y, n.deg as deg, n.type as type, n.symbol as symbol, n.msu_id as msu_id, n.identifier as identifier
+      RETURN n.id as id, n.x as x, n.y as y, n.deg as deg, n.type as type, n.symbol as symbol, n.msu_id as msu_id, n.identifier as identifier, n.sign as sign
       `
     )
     .subscribe({
@@ -135,6 +135,7 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
             symbol: record.get("symbol"),
             msu_id: record.get("msu_id"),
             identifier: record.get("identifier"),
+            sign: record.get("sign") || null,
             isRogue: record.get("x") === null,
           })
         );
@@ -148,7 +149,7 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
           .run(
             `
             MATCH (s:Gene)-[r:INTERACTS_WITH]->(t:Gene)
-            RETURN s.id as s, t.id as t, r.weight as w, r.irp as irp
+            RETURN s.id as s, t.id as t, r.weight as w, r.irp as irp, r.sign as sign
             `
           )
           .subscribe({
@@ -163,6 +164,7 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
                   has_regulates: false,
                   weight: record.get("w"),
                   irp: record.get("irp"),
+                  sign: record.get("sign") || null,
                 })
               );
               isFirstEdge = false;
@@ -299,6 +301,84 @@ app.get("/api/network/edges/binds", async (req, res) => {
   } catch (error) {
     console.error("Binds query error:", error);
     res.status(500).json({ error: "Failed to query motif binding data." });
+  } finally {
+    await session.close();
+  }
+});
+
+/**
+ * POST /api/network/edges/binds
+ * Fetches motif binding information for a batch of source-target gene pairs.
+ */
+app.post("/api/network/edges/binds", async (req, res) => {
+  const { pairs } = req.body;
+
+  if (!pairs || !Array.isArray(pairs) || pairs.length === 0) {
+    return res.status(400).json({ error: "Invalid edge pairs list provided." });
+  }
+
+  const validPairs = pairs
+    .filter((p) => p && isValidIdentifier(p.source || p.s) && isValidIdentifier(p.target || p.t))
+    .map((p) => ({
+      source: p.source || p.s,
+      target: p.target || p.t,
+    }));
+
+  if (validPairs.length === 0) {
+    return res.status(400).json({ error: "No valid identifier pairs provided." });
+  }
+
+  const session = driver.session({ defaultAccessMode: neo4j.session.READ });
+  try {
+    const result = await session.run(
+      `
+      UNWIND $pairs AS pair
+      MATCH (s:Gene {id: pair.source})-[:HAS_MOTIF]->(m:Motif)-[b:BINDS]->(t:Gene {id: pair.target})
+      RETURN pair.source AS source,
+             pair.target AS target,
+             m.id AS motif_id,
+             m.source AS motif_source,
+             b.strand AS strand,
+             b.score AS score,
+             b.p_value AS p_value,
+             b.q_value AS q_value,
+             b.matched_sequence AS matched_sequence,
+             b.start AS start,
+             b.stop AS stop,
+             b.occurrence AS occurrence
+      `,
+      { pairs: validPairs }
+    );
+
+    const bindsByPair = {};
+    result.records.forEach((r) => {
+      const src = r.get("source");
+      const tgt = r.get("target");
+      const key = `${src}->${tgt}`;
+      if (!bindsByPair[key]) bindsByPair[key] = [];
+
+      const sVal = r.get("start");
+      const eVal = r.get("stop");
+      const occVal = r.get("occurrence");
+
+      bindsByPair[key].push({
+        motif_id: r.get("motif_id"),
+        motif_source: r.get("motif_source"),
+        strand: r.get("strand"),
+        score: r.get("score"),
+        p_value: r.get("p_value"),
+        q_value: r.get("q_value"),
+        matched_sequence: r.get("matched_sequence"),
+        start: sVal !== null ? (sVal.toNumber ? sVal.toNumber() : sVal) : null,
+        stop: eVal !== null ? (eVal.toNumber ? eVal.toNumber() : eVal) : null,
+        occurrence: occVal !== null ? (occVal.toNumber ? occVal.toNumber() : occVal) : null,
+      });
+    });
+
+    res.json({ bindsByPair });
+  } catch (error) {
+    console.error("Batch binds query error:", error);
+    res.status(500).json({ error: "Failed to query motif binding data in batch." });
   } finally {
     await session.close();
   }

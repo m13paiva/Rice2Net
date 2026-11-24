@@ -7,6 +7,8 @@
 
 // Seeded random number generator for reproducible force layout simulations
 let _seed = 42;
+const API_BASE = "http://localhost:3000";
+window.API_BASE = API_BASE;
 function mulberry32(a) {
   return function () {
     var t = (a += 0x6d2b79f5);

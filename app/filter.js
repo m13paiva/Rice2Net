@@ -8,34 +8,86 @@
 window.__APP_CORE__ = window.__APP_CORE__ || {};
 
 /**
- * Resolves user target strings (gene symbols, RAP IDs, MSU IDs) to internal node IDs using cached metadata.
+ * Resolves user target strings (RAP IDs, MSU IDs, and Gene Identifiers/Symbols) to internal node IDs.
+ * Supports exact IDs, MSU isoform-stripped IDs, gene identifiers, and gene symbols.
  * @param {Array<string>} rawTargets - Array of raw input target identifiers.
  * @returns {Set<string>} Set of resolved internal node IDs.
  */
 window.resolveTargetIds = function (rawTargets) {
   const resolved = new Set();
-  const rawSet = new Set(
-    rawTargets.map((s) =>
-      String(s)
-        .toLowerCase()
-        .replace(/\.\d+$/, ""),
-    ),
-  );
+  if (!rawTargets) return resolved;
+  const inputList = Array.isArray(rawTargets) ? rawTargets : [rawTargets];
+  if (inputList.length === 0) return resolved;
+
+  const expandedTargets = [];
+  inputList.forEach((item) => {
+    if (!item) return;
+    String(item)
+      .split(/[\r\n,\t;]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .forEach((s) => expandedTargets.push(s));
+  });
+
+  if (expandedTargets.length === 0) return resolved;
+
+  const normalize = (s) => String(s || "").trim().toLowerCase();
+  const normalizeMsu = (s) => normalize(s).replace(/\.\d+$/, "");
+
+  const targetSet = new Set(expandedTargets.map(normalize));
+  const targetMsuSet = new Set(expandedTargets.map(normalizeMsu));
+
+  const matchesTarget = (val, isMsu = false) => {
+    if (!val || val === "." || val === "-" || val === "null" || val === "none") return false;
+    const nVal = normalize(val);
+    if (targetSet.has(nVal)) return true;
+    if (isMsu || nVal.startsWith("loc_os")) {
+      if (targetMsuSet.has(normalizeMsu(nVal))) return true;
+    }
+    return false;
+  };
+
+  const checkNode = (n) => {
+    if (!n) return;
+    const id = String(n.id);
+    if (matchesTarget(id)) { resolved.add(id); return; }
+    if (n.rap_id && matchesTarget(n.rap_id)) { resolved.add(id); return; }
+    if (n.msu_id && matchesTarget(n.msu_id, true)) { resolved.add(id); return; }
+    if (n.identifier && matchesTarget(n.identifier)) { resolved.add(id); return; }
+    if (n.symbol && matchesTarget(n.symbol)) { resolved.add(id); return; }
+
+    if (n.metadata) {
+      const meta = n.metadata;
+      const keys = ["MSU_ID", "MSU ID", "msu_id", "RAP_ID", "RAP ID", "Identifier", "identifier", "Symbol", "symbol"];
+      for (const k of keys) {
+        if (meta[k]) {
+          const parts = String(meta[k]).split(/[,;\t]+/).map(s => s.trim()).filter(Boolean);
+          if (parts.some(p => matchesTarget(p, k.toUpperCase().includes("MSU")))) {
+            resolved.add(id);
+            return;
+          }
+        }
+      }
+    }
+  };
+
+  if (Array.isArray(nodes)) nodes.forEach(checkNode);
+  if (RAW_DATA && Array.isArray(RAW_DATA.nodes)) RAW_DATA.nodes.forEach(checkNode);
+  if (RAW_DATA && Array.isArray(RAW_DATA.dbNodes)) RAW_DATA.dbNodes.forEach(checkNode);
 
   if (RAW_DATA && RAW_DATA.metaById) {
     RAW_DATA.metaById.forEach((meta, id) => {
-      if (rawSet.has(String(id).toLowerCase())) {
-        resolved.add(id);
-        return;
-      }
-      if (meta && meta.metadata) {
-        const keysToCheck = ["RAP_ID", "RAP ID", "MSU_ID", "MSU ID"];
-        for (const k of keysToCheck) {
+      if (resolved.has(id)) return;
+      if (matchesTarget(id)) { resolved.add(id); return; }
+      if (meta.identifier && matchesTarget(meta.identifier)) { resolved.add(id); return; }
+      if (meta.msu_id && matchesTarget(meta.msu_id, true)) { resolved.add(id); return; }
+      if (meta.symbol && matchesTarget(meta.symbol)) { resolved.add(id); return; }
+      if (meta.metadata) {
+        const keys = ["MSU_ID", "MSU ID", "msu_id", "RAP_ID", "RAP ID", "Identifier", "identifier", "Symbol", "symbol"];
+        for (const k of keys) {
           if (meta.metadata[k]) {
-            const parts = String(meta.metadata[k])
-              .split(",")
-              .map((s) => s.trim().toLowerCase());
-            if (parts.some((p) => rawSet.has(p))) {
+            const parts = String(meta.metadata[k]).split(/[,;\t]+/).map(s => s.trim()).filter(Boolean);
+            if (parts.some(p => matchesTarget(p, k.toUpperCase().includes("MSU")))) {
               resolved.add(id);
               return;
             }
@@ -44,6 +96,7 @@ window.resolveTargetIds = function (rawTargets) {
       }
     });
   }
+
   return resolved;
 };
 
