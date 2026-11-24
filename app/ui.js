@@ -66,25 +66,24 @@ function updateTargetStats(found, total) {
  * Evaluates active target gene inputs and updates sidebar match counts.
  */
 window.updateTargetCounts = function () {
-  const text = document.getElementById("target-input").value;
+  const text = document.getElementById("target-input")?.value || "";
   if (!text.trim()) {
     updateTargetStats(0, 0);
     return;
   }
 
-  const rawTargets = text
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const rawTargets = window.parseRawTargets
+    ? window.parseRawTargets(text)
+    : text.split(/[\r\n,\t]+/).map((s) => s.trim()).filter(Boolean);
   const targetSet = window.resolveTargetIds
     ? window.resolveTargetIds(rawTargets)
     : new Set(rawTargets);
 
   let found = 0;
+  const counted = new Set();
   nodes.forEach((n) => {
-    if (targetSet.has(n.id)) {
-      if (n.color === CONFIG.visuals.colors.Transparent) return;
-      if (n.isRogue && !VISIBILITY_STATE.Rogue) return;
+    if (targetSet.has(String(n.id)) && !counted.has(String(n.id))) {
+      counted.add(String(n.id));
       found++;
     }
   });

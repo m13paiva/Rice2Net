@@ -118,7 +118,7 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
     .run(
       `
       MATCH (n:Gene)
-      RETURN n.id as id, n.x as x, n.y as y, n.deg as deg, n.type as type, n.symbol as symbol, n.msu_id as msu_id, n.identifier as identifier, n.sign as sign
+      RETURN n.id as id, n.x as x, n.y as y, n.deg as deg, n.type as type, n.symbol as symbol, n.msu_id as msu_id, n.identifier as identifier
       `
     )
     .subscribe({
@@ -135,7 +135,6 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
             symbol: record.get("symbol"),
             msu_id: record.get("msu_id"),
             identifier: record.get("identifier"),
-            sign: record.get("sign") || null,
             isRogue: record.get("x") === null,
           })
         );
@@ -427,7 +426,7 @@ app.get("/api/network/node/:id", async (req, res) => {
     const result = await session.run(
       `
       MATCH (n:Gene)
-      WHERE n.id = $nodeId OR n.msu_id = $nodeId OR n.symbol = $nodeId
+      WHERE n.id = $nodeId OR n.msu_id = $nodeId OR n.symbol = $nodeId OR n.identifier = $nodeId
       WITH n LIMIT 1
       OPTIONAL MATCH (n)-[:IN_PATHWAY]->(p:Pathway)
       WITH n, collect(DISTINCT {code: p.id, name: p.name}) as pathways

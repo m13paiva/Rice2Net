@@ -51,7 +51,6 @@ window.importJSON = function (input) {
             symbol: n.symbol || (n.metadata && (n.metadata.Symbol || n.metadata.symbol)) || "",
             msu_id: n.msu_id || (n.metadata && (n.metadata.MSU_ID || n.metadata.msu_id)) || "",
             originalType: n.originalType || n.type || "Gene",
-            sign: n.sign || (n.metadata && n.metadata.Sign) || null,
             deg: n.deg !== undefined && n.deg !== null ? n.deg : 0,
           };
           if (typeof window.applyNodeTypeStyling === "function") {
@@ -172,32 +171,56 @@ window.importEdges = function (input) {
         occurrence: -1,
       };
 
+      const firstLine = lines[0].trim();
+      let delimiter = "\t";
+      if (firstLine.includes("\t")) {
+        delimiter = "\t";
+      } else if (firstLine.includes(",")) {
+        delimiter = ",";
+      } else {
+        delimiter = /\s+/;
+      }
+
+      const splitLine = (l) => {
+        if (delimiter === ",") {
+          return l.split(",").map(s => s.trim().replace(/^["']|["']$/g, ""));
+        } else if (delimiter === "\t") {
+          return l.split("\t").map(s => s.trim());
+        } else {
+          return l.trim().split(/\s+/);
+        }
+      };
+
+      let hasHeader = false;
       let startIdx = 0;
-      if (lines.length > 0 && lines[0].toLowerCase().includes("source")) {
-        const headerParts = lines[0].trim().split(/\t/).map((h) => h.trim().toLowerCase());
-        headerParts.forEach((h, idx) => {
-          if (h === "source") colMap.source = idx;
-          else if (h === "target") colMap.target = idx;
-          else if (h === "weight") colMap.weight = idx;
-          else if (h === "irp_score" || h === "irp") colMap.irp = idx;
-          else if (h === "directional") colMap.directional = idx;
-          else if (h === "sign") colMap.sign = idx;
-          else if (h === "motif_id") colMap.motif_id = idx;
-          else if (h === "motif_source") colMap.motif_source = idx;
-          else if (h === "matched_sequence") colMap.matched_sequence = idx;
-          else if (h === "strand") colMap.strand = idx;
-          else if (h === "start") colMap.start = idx;
-          else if (h === "stop") colMap.stop = idx;
-          else if (h === "score") colMap.score = idx;
-          else if (h === "p_value") colMap.p_value = idx;
-          else if (h === "q_value") colMap.q_value = idx;
-          else if (h === "occurrence") colMap.occurrence = idx;
-        });
-        startIdx = 1;
+      if (lines.length > 0) {
+        const firstParts = splitLine(lines[0]).map((h) => h.toLowerCase());
+        hasHeader = firstParts.includes("source") || firstParts.includes("from") || firstParts.includes("target") || firstParts.includes("to");
+        if (hasHeader) {
+          firstParts.forEach((h, idx) => {
+            if (h === "source" || h === "from") colMap.source = idx;
+            else if (h === "target" || h === "to") colMap.target = idx;
+            else if (h === "weight" || h === "w" || h === "val" || h === "value") colMap.weight = idx;
+            else if (h === "irp_score" || h === "irp") colMap.irp = idx;
+            else if (h === "directional" || h === "direction") colMap.directional = idx;
+            else if (h === "sign") colMap.sign = idx;
+            else if (h === "motif_id") colMap.motif_id = idx;
+            else if (h === "motif_source") colMap.motif_source = idx;
+            else if (h === "matched_sequence") colMap.matched_sequence = idx;
+            else if (h === "strand") colMap.strand = idx;
+            else if (h === "start") colMap.start = idx;
+            else if (h === "stop") colMap.stop = idx;
+            else if (h === "score") colMap.score = idx;
+            else if (h === "p_value") colMap.p_value = idx;
+            else if (h === "q_value") colMap.q_value = idx;
+            else if (h === "occurrence") colMap.occurrence = idx;
+          });
+          startIdx = 1;
+        }
       }
 
       for (let i = startIdx; i < lines.length; i++) {
-        const parts = lines[i].trim().split(/\t/);
+        const parts = splitLine(lines[i]);
         if (parts.length < 2) continue;
 
         const s = parts[colMap.source] ? parts[colMap.source].trim() : parts[0].trim();
@@ -205,28 +228,53 @@ window.importEdges = function (input) {
         if (!s || !t) continue;
 
         let w = 1;
-        if (colMap.weight !== -1 && parts[colMap.weight] !== undefined) {
-          const parsedW = parseFloat(parts[colMap.weight]);
-          if (!isNaN(parsedW)) w = parsedW;
-        } else if (parts.length >= 3 && !isNaN(parseFloat(parts[2]))) {
-          w = parseFloat(parts[2]);
-        }
-
         let irp = null;
-        if (colMap.irp !== -1 && parts[colMap.irp] !== undefined) {
-          const parsedIRP = parseFloat(parts[colMap.irp]);
-          if (!isNaN(parsedIRP)) irp = parsedIRP;
-        }
-
         let sign = null;
-        if (colMap.sign !== -1 && parts[colMap.sign] !== undefined) {
-          const rawSign = parts[colMap.sign].trim();
-          if (rawSign === "+" || rawSign === "-") sign = rawSign;
-        }
-
         let isDirectional = false;
-        if (colMap.directional !== -1 && parts[colMap.directional] !== undefined) {
-          isDirectional = parts[colMap.directional].trim().toLowerCase() === "true";
+
+        if (hasHeader) {
+          if (colMap.weight !== -1 && parts[colMap.weight] !== undefined) {
+            const parsedW = parseFloat(parts[colMap.weight]);
+            if (!isNaN(parsedW)) w = parsedW;
+          }
+          if (colMap.irp !== -1 && parts[colMap.irp] !== undefined) {
+            const parsedIRP = parseFloat(parts[colMap.irp]);
+            if (!isNaN(parsedIRP)) irp = parsedIRP;
+          }
+          if (colMap.sign !== -1 && parts[colMap.sign] !== undefined) {
+            const rawSign = parts[colMap.sign].trim();
+            if (rawSign === "+" || rawSign === "-" || rawSign.toLowerCase() === "positive" || rawSign.toLowerCase() === "negative" || rawSign === "+1" || rawSign === "-1") {
+              sign = (rawSign === "-" || rawSign.toLowerCase() === "negative" || rawSign === "-1") ? "-" : "+";
+            }
+          }
+          if (colMap.directional !== -1 && parts[colMap.directional] !== undefined) {
+            isDirectional = parts[colMap.directional].trim().toLowerCase() === "true";
+          }
+        } else {
+          // No header: dynamically scan columns after target (index 2 onwards)
+          let assignedWeight = false;
+          let assignedIRP = false;
+
+          for (let col = 2; col < parts.length; col++) {
+            const p = parts[col].trim();
+            if (!p) continue;
+            const pLower = p.toLowerCase();
+
+            if (p === "+" || p === "-" || pLower === "positive" || pLower === "negative" || p === "+1" || p === "-1") {
+              sign = (p === "-" || pLower === "negative" || p === "-1") ? "-" : "+";
+            } else if (pLower === "true" || pLower === "false") {
+              isDirectional = pLower === "true";
+            } else if (!isNaN(parseFloat(p))) {
+              const num = parseFloat(p);
+              if (!assignedWeight) {
+                w = num;
+                assignedWeight = true;
+              } else if (!assignedIRP) {
+                irp = num;
+                assignedIRP = true;
+              }
+            }
+          }
         }
 
         const edgeKey = `${s}->${t}`;

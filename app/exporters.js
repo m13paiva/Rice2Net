@@ -268,7 +268,6 @@ window.exportJSON = async function () {
         r: n.r,
         deg: n.deg !== undefined && n.deg !== null ? n.deg : 0,
         originalType: n.originalType || "Gene",
-        sign: n.sign || (n.metadata && n.metadata.Sign) || null,
         isRogue: !!n.isRogue,
       });
     });
@@ -366,7 +365,7 @@ window.exportGenesTSV = async function () {
     }
 
     const headers = [
-      "Gene_ID", "Type", "Visual_Label", "Symbol", "MSU_ID", "Identifier", "Sign",
+      "Gene_ID", "Type", "Visual_Label", "Symbol", "MSU_ID", "Identifier",
       "Full_Name", "KEGG_Gene", "TF_Transcripts", "TF_Family", "GO_Terms",
       "KEGG_Pathways", "MapMan_Bins", "Uniprot_Entries"
     ];
@@ -382,7 +381,6 @@ window.exportGenesTSV = async function () {
       row.push(d.symbol || n.symbol || "");
       row.push(d.msu_id || n.msu_id || "");
       row.push(n.identifier || d.identifier || "");
-      row.push(n.sign || (n.metadata && n.metadata.Sign) || d.sign || "");
       row.push(d.full_name || "");
       row.push(d.kegg_gene || "");
 
@@ -463,7 +461,9 @@ window.exportPNG = function () {
       const exportCtx = exportCanvas.getContext("2d");
 
       const text = document.getElementById("target-input")?.value || "";
-      const rawTargets = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      const rawTargets = window.parseRawTargets
+        ? window.parseRawTargets(text)
+        : text.split(/[\r\n,\t]+/).map((s) => s.trim()).filter(Boolean);
       const targetSet = window.resolveTargetIds ? window.resolveTargetIds(rawTargets) : new Set(rawTargets);
 
       const presentTypes = new Set();

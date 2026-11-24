@@ -51,8 +51,22 @@
             }
 
             function revertToEmbeddedNetwork() {
-                sessionStorage.setItem("skipHomepage", "true");
-                location.reload();
+                if (typeof window.revertToEmbeddedNetworkCore === "function") {
+                    window.revertToEmbeddedNetworkCore();
+                } else if (window.__APP_CORE__ && typeof window.__APP_CORE__.main === "function") {
+                    const jsonInfo = document.getElementById('import-json-info');
+                    if (jsonInfo) jsonInfo.style.display = 'none';
+                    const edgesInfo = document.getElementById('import-edges-info');
+                    if (edgesInfo) edgesInfo.style.display = 'none';
+                    const jsonFile = document.getElementById('import-json-file');
+                    if (jsonFile) jsonFile.value = '';
+                    const edgesFile = document.getElementById('import-edges-file');
+                    if (edgesFile) edgesFile.value = '';
+                    window.IS_IMPORTED_NETWORK = false;
+                    window.IS_FILTERED_NETWORK = false;
+                    enterApp();
+                    window.__APP_CORE__.main();
+                }
             }
 
             document.addEventListener("DOMContentLoaded", () => {

@@ -21,10 +21,9 @@ window.reapplyColors = function () {
   }
 
   const text = document.getElementById("target-input").value;
-  const rawTargets = text
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const rawTargets = window.parseRawTargets
+    ? window.parseRawTargets(text)
+    : text.split(/[\r\n,\t]+/).map((s) => s.trim()).filter(Boolean);
 
   const targetSet = window.resolveTargetIds
     ? window.resolveTargetIds(rawTargets)
@@ -110,13 +109,16 @@ window.reapplyColors = function () {
     if (rogueState === false) rogueState = 0;
 
     if (n.isRogue) {
-      if (rogueState === 0) {
+      if (isTargetMatched) {
+        isVisible = targetState > 0;
+        isHighlighted = targetState === 2;
+      } else if (rogueState === 0) {
         isVisible = false;
-      } else if (!isTargetMatched && state === 0) {
+      } else if (state === 0) {
         isVisible = false;
       } else {
         isVisible = true;
-        if (rogueState === 1 && !isTargetMatched && state !== 2) {
+        if (rogueState === 1 && state !== 2) {
           isHighlighted = false;
         }
       }
@@ -138,20 +140,22 @@ window.reapplyColors = function () {
       n.fillColor = baseSpec.hollow ? CONFIG.visuals.colors.Transparent : CONFIG.visuals.colors.Gene;
       n.strokeColor = CONFIG.visuals.colors.Gene;
     } else {
-      if (window.applyNodeTypeStyling) {
+      if (isTargetMatched) {
+        n.color = finalColor;
+        n.fillColor = finalColor;
+        n.strokeColor = finalColor;
+        n.strokeWidth = 2;
+        n.shape = baseSpec.shape || "circle";
+        n.hollow = false;
+        n.dashed = n.isRogue;
+        n.typeLabel = finalLabel;
+      } else if (window.applyNodeTypeStyling) {
         window.applyNodeTypeStyling(n, finalColor, finalLabel);
         if (n.isRogue) n.dashed = true;
-        if (isTargetMatched) {
-          n.hollow = false;
-          n.fillColor = finalColor;
-          n.strokeColor = finalColor;
-          n.strokeWidth = 2;
-        }
       } else {
         n.color = finalColor;
         n.shape = baseSpec.shape;
         n.typeLabel = finalLabel;
-        if (isTargetMatched) n.hollow = false;
       }
     }
   });

@@ -8,6 +8,35 @@
 window.__APP_CORE__ = window.__APP_CORE__ || {};
 
 /**
+ * Standard utility to parse raw user target input strings into an array of distinct target tokens.
+ * Handles newlines, tabs, commas, and safely handles rice symbols containing semicolons (e.g. HKT1;5).
+ * @param {string|Array<string>} rawInput - Input target text or array of strings.
+ * @returns {Array<string>} Cleaned array of target search tokens.
+ */
+window.parseRawTargets = function (rawInput) {
+  if (!rawInput) return [];
+  const inputList = Array.isArray(rawInput) ? rawInput : [rawInput];
+  const results = [];
+  inputList.forEach((item) => {
+    if (!item) return;
+    String(item)
+      .split(/[\r\n,\t]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .forEach((s) => {
+        if (s.includes(";") && !/^[A-Za-z0-9_]+;\d+$/i.test(s)) {
+          s.split(/;\s*/).map((p) => p.trim()).filter(Boolean).forEach((p) => {
+            if (!results.includes(p)) results.push(p);
+          });
+        } else {
+          if (!results.includes(s)) results.push(s);
+        }
+      });
+  });
+  return results;
+};
+
+/**
  * Resolves user target strings (RAP IDs, MSU IDs, and Gene Identifiers/Symbols) to internal node IDs.
  * Supports exact IDs, MSU isoform-stripped IDs, gene identifiers, and gene symbols.
  * @param {Array<string>} rawTargets - Array of raw input target identifiers.
@@ -16,23 +45,12 @@ window.__APP_CORE__ = window.__APP_CORE__ || {};
 window.resolveTargetIds = function (rawTargets) {
   const resolved = new Set();
   if (!rawTargets) return resolved;
-  const inputList = Array.isArray(rawTargets) ? rawTargets : [rawTargets];
-  if (inputList.length === 0) return resolved;
 
-  const expandedTargets = [];
-  inputList.forEach((item) => {
-    if (!item) return;
-    String(item)
-      .split(/[\r\n,\t;]+/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .forEach((s) => expandedTargets.push(s));
-  });
-
+  const expandedTargets = window.parseRawTargets(rawTargets);
   if (expandedTargets.length === 0) return resolved;
 
   const normalize = (s) => String(s || "").trim().toLowerCase();
-  const normalizeMsu = (s) => normalize(s).replace(/\.\d+$/, "");
+  const normalizeMsu = (s) => normalize(s).replace(/^loc_/, "").replace(/\.\d+$/, "");
 
   const targetSet = new Set(expandedTargets.map(normalize));
   const targetMsuSet = new Set(expandedTargets.map(normalizeMsu));
@@ -41,7 +59,7 @@ window.resolveTargetIds = function (rawTargets) {
     if (!val || val === "." || val === "-" || val === "null" || val === "none") return false;
     const nVal = normalize(val);
     if (targetSet.has(nVal)) return true;
-    if (isMsu || nVal.startsWith("loc_os")) {
+    if (isMsu || nVal.startsWith("loc_os") || /^os\d{2}g\d{5}/i.test(nVal)) {
       if (targetMsuSet.has(normalizeMsu(nVal))) return true;
     }
     return false;
@@ -354,10 +372,9 @@ window.resetToFull = async function () {
   if (simulation) simulation.stop();
 
   const text = document.getElementById("target-input").value;
-  const rawTargets = text
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const rawTargets = window.parseRawTargets
+    ? window.parseRawTargets(text)
+    : text.split(/[\r\n,\t]+/).map((s) => s.trim()).filter(Boolean);
 
   const targetSet = window.resolveTargetIds(rawTargets);
   const hasTargets = targetSet.size > 0;
@@ -435,10 +452,9 @@ window.runFilter = async function () {
     return;
   }
 
-  const rawTargets = text
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const rawTargets = window.parseRawTargets
+    ? window.parseRawTargets(text)
+    : text.split(/[\r\n,\t]+/).map((s) => s.trim()).filter(Boolean);
 
   const targetSet = window.resolveTargetIds(rawTargets);
 
@@ -610,7 +626,7 @@ window.runFilter = async function () {
   const subNodesMap = new Set(subNodes.map((n) => n.id));
   targetSet.forEach((tId) => {
     if (!subNodesMap.has(tId)) {
-      const originalNode = RAW_DATA.nodes.find((n) => n.id === tId);
+      const originalNode = (RAW_DATA.nodes && RAW_DATA.nodes.find((n) => n.id === tId)) || (RAW_DATA.dbNodes && RAW_DATA.dbNodes.find((n) => n.id === tId));
       if (originalNode) {
         const newNode = {
           ...originalNode,

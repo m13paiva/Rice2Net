@@ -81,11 +81,10 @@ window.renderTargetLegend = function () {
   const legendTarget = document.getElementById("legend-target");
   if (!legendTarget) return;
 
-  const text = document.getElementById("target-input").value;
-  const rawTargets = text
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const text = document.getElementById("target-input")?.value || "";
+  const rawTargets = window.parseRawTargets
+    ? window.parseRawTargets(text)
+    : text.split(/[\r\n,\t]+/).map((s) => s.trim()).filter(Boolean);
   const targetSet = window.resolveTargetIds
     ? window.resolveTargetIds(rawTargets)
     : new Set(rawTargets);
