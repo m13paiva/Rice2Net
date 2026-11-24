@@ -50,6 +50,13 @@ window.reapplyColors = function () {
 
   // Evaluate visual properties for each node
   nodes.forEach((n) => {
+    if (n.isDummy || String(n.id).startsWith("__dummy")) {
+      n.isTarget = false;
+      n.color = CONFIG.visuals.colors.Transparent;
+      n.fillColor = CONFIG.visuals.colors.Transparent;
+      n.strokeColor = CONFIG.visuals.colors.Transparent;
+      return;
+    }
     const deg = nodeDegrees.get(n.id) || 0;
     n.deg = deg;
     n.isRogue = deg === 0;
@@ -89,7 +96,7 @@ window.reapplyColors = function () {
     if (targetState === true) targetState = 2;
     if (targetState === false) targetState = 0;
 
-    if (hasTargets && targetSet.has(n.id)) {
+    if (hasTargets && targetSet.has(String(n.id))) {
       isTargetMatched = true;
       if (targetState > 0) {
         isVisible = true;
@@ -102,6 +109,7 @@ window.reapplyColors = function () {
         finalLabel = "Target Gene";
       }
     }
+    n.isTarget = isTargetMatched;
 
     // Evaluate isolated/rogue node visibility
     let rogueState = VISIBILITY_STATE.Rogue;
@@ -185,8 +193,9 @@ window.autoFit = function () {
   let hasVisible = false;
 
   for (const n of nodes) {
+    if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
     if (n.color === CONFIG.visuals.colors.Transparent) continue;
-    if (n.isRogue && !VISIBILITY_STATE.Rogue) continue;
+    if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
 
     hasVisible = true;
     if (n.x < minX) minX = n.x;
@@ -201,12 +210,12 @@ window.autoFit = function () {
     minY = 0;
     maxY = 1;
   }
-  const graphW = maxX - minX;
-  const graphH = maxY - minY;
+  const graphW = Math.max(maxX - minX, 300);
+  const graphH = Math.max(maxY - minY, 300);
   const midX = (minX + maxX) / 2;
   const midY = (minY + maxY) / 2;
   const padding = 0.95;
-  const scale = Math.min(width / graphW, height / graphH) * padding;
+  const scale = Math.min(Math.min(width / graphW, height / graphH) * padding, 5);
   const tx = (width + 280) / 2 - scale * midX;
   const ty = height / 2 - scale * midY;
   const t = d3.zoomIdentity.translate(tx, ty).scale(scale);

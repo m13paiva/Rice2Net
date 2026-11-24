@@ -94,10 +94,13 @@ window.importJSON = function (input) {
           })
           .filter(Boolean);
 
+        await window.__APP_CORE__.hydrateMetadata();
+        RAW_DATA.nodes = nodes;
         RAW_DATA.workingNodes = nodes;
         RAW_DATA.workingLinks = links;
-
-        await window.__APP_CORE__.hydrateMetadata();
+        if (typeof window.__APP_CORE__.cacheMetaSnapshot === "function") {
+          window.__APP_CORE__.cacheMetaSnapshot();
+        }
         RAW_DATA.adjacency = window.__APP_CORE__.buildAdjacency(nodes, links);
 
         if (loader) loader.style.display = "none";
@@ -344,13 +347,15 @@ window.importEdges = function (input) {
         }))
         .filter((l) => l.source && l.target);
 
+      await window.__APP_CORE__.hydrateMetadata();
       RAW_DATA.nodes = nodes;
       RAW_DATA.links = newEdges;
       RAW_DATA.workingNodes = nodes;
       RAW_DATA.workingLinks = links;
+      if (typeof window.__APP_CORE__.cacheMetaSnapshot === "function") {
+        window.__APP_CORE__.cacheMetaSnapshot();
+      }
       RAW_DATA.adjacency = window.__APP_CORE__.buildAdjacency(nodes, links);
-
-      await window.__APP_CORE__.hydrateMetadata();
       startCalculation(true);
     };
     reader.readAsText(input.files[0]);

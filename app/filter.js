@@ -20,7 +20,7 @@ window.parseRawTargets = function (rawInput) {
   inputList.forEach((item) => {
     if (!item) return;
     String(item)
-      .split(/[\r\n,\t]+/)
+      .split(/[\r\n,\t\s]+/)
       .map((s) => s.trim())
       .filter(Boolean)
       .forEach((s) => {
@@ -38,7 +38,7 @@ window.parseRawTargets = function (rawInput) {
 
 /**
  * Resolves user target strings (RAP IDs, MSU IDs, and Gene Identifiers/Symbols) to internal node IDs.
- * Supports exact IDs, MSU isoform-stripped IDs, gene identifiers, and gene symbols.
+ * Supports RAP locus/transcript IDs, MSU IDs (with/without LOC_ or isoform, multi-MSU), and gene identifiers (with/without Os prefix).
  * @param {Array<string>} rawTargets - Array of raw input target identifiers.
  * @returns {Set<string>} Set of resolved internal node IDs.
  */
@@ -51,27 +51,64 @@ window.resolveTargetIds = function (rawTargets) {
 
   const normalize = (s) => String(s || "").trim().toLowerCase();
   const normalizeMsu = (s) => normalize(s).replace(/^loc_/, "").replace(/\.\d+$/, "");
+  const normalizeRap = (s) => normalize(s).replace(/^(os\d{2})t(\d{7})(-\d+)?$/, "$1g$2");
 
-  const targetSet = new Set(expandedTargets.map(normalize));
-  const targetMsuSet = new Set(expandedTargets.map(normalizeMsu));
+  const targetSet = new Set();
+  const targetMsuSet = new Set();
 
-  const matchesTarget = (val, isMsu = false) => {
+  expandedTargets.forEach((raw) => {
+    const n = normalize(raw);
+    if (!n) return;
+    targetSet.add(n);
+
+    // Support RAP transcript ID -> RAP gene ID (e.g. Os01t0100900-01 -> os01g0100900)
+    const rap = normalizeRap(n);
+    if (rap !== n) targetSet.add(rap);
+
+    // Support MSU ID normalization (strip LOC_ and .isoform)
+    targetMsuSet.add(normalizeMsu(n));
+
+    // Support Os-prefixed rice gene symbols (e.g. OsNAC20 -> nac20, OsDREB2A -> dreb2a)
+    if (n.startsWith("os") && n.length > 3 && !/^os\d{2}[gt]\d+/i.test(n)) {
+      targetSet.add(n.slice(2));
+    }
+  });
+
+  const matchesSingle = (val, isMsu = false) => {
     if (!val || val === "." || val === "-" || val === "null" || val === "none") return false;
     const nVal = normalize(val);
     if (targetSet.has(nVal)) return true;
-    if (isMsu || nVal.startsWith("loc_os") || /^os\d{2}g\d{5}/i.test(nVal)) {
+    if (nVal.startsWith("os") && !/^os\d{2}[gt]\d+/i.test(nVal)) {
+      if (targetSet.has(nVal.slice(2))) return true;
+    }
+    const rapVal = normalizeRap(nVal);
+    if (rapVal !== nVal && targetSet.has(rapVal)) return true;
+    if (isMsu || nVal.startsWith("loc_os") || /^os\d{2}g\d{5}(\.\d+)?$/i.test(nVal)) {
       if (targetMsuSet.has(normalizeMsu(nVal))) return true;
     }
     return false;
   };
 
+  const matchesTarget = (val, isMsu = false) => {
+    if (!val || val === "." || val === "-" || val === "null" || val === "none") return false;
+    const str = String(val).trim();
+    if (matchesSingle(str, isMsu)) return true;
+    if (isMsu && (str.includes(",") || str.includes(";") || str.includes(" "))) {
+      const parts = str.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+      return parts.some((p) => matchesSingle(p, true));
+    }
+    return false;
+  };
+
   const checkNode = (n) => {
-    if (!n) return;
+    if (!n || n.isDummy) return;
     const id = String(n.id);
+    if (id.startsWith("__dummy")) return;
     if (matchesTarget(id)) { resolved.add(id); return; }
     if (n.rap_id && matchesTarget(n.rap_id)) { resolved.add(id); return; }
     if (n.msu_id && matchesTarget(n.msu_id, true)) { resolved.add(id); return; }
     if (n.identifier && matchesTarget(n.identifier)) { resolved.add(id); return; }
+    if (n.tf_id && matchesTarget(n.tf_id, true)) { resolved.add(id); return; }
     if (n.symbol && matchesTarget(n.symbol)) { resolved.add(id); return; }
 
     if (n.metadata) {
@@ -79,8 +116,13 @@ window.resolveTargetIds = function (rawTargets) {
       const keys = ["MSU_ID", "MSU ID", "msu_id", "RAP_ID", "RAP ID", "Identifier", "identifier", "Symbol", "symbol"];
       for (const k of keys) {
         if (meta[k]) {
-          const parts = String(meta[k]).split(/[,;\t]+/).map(s => s.trim()).filter(Boolean);
-          if (parts.some(p => matchesTarget(p, k.toUpperCase().includes("MSU")))) {
+          const isMsuKey = k.toUpperCase().includes("MSU");
+          if (matchesTarget(meta[k], isMsuKey)) {
+            resolved.add(id);
+            return;
+          }
+          const parts = String(meta[k]).split(/[,;\t]+/).map((s) => s.trim()).filter(Boolean);
+          if (parts.some((p) => matchesSingle(p, isMsuKey))) {
             resolved.add(id);
             return;
           }
@@ -91,12 +133,18 @@ window.resolveTargetIds = function (rawTargets) {
 
   if (Array.isArray(nodes)) nodes.forEach(checkNode);
   if (RAW_DATA && Array.isArray(RAW_DATA.nodes)) RAW_DATA.nodes.forEach(checkNode);
-  if (RAW_DATA && Array.isArray(RAW_DATA.dbNodes)) RAW_DATA.dbNodes.forEach(checkNode);
+  if (!window.IS_IMPORTED_NETWORK && RAW_DATA && Array.isArray(RAW_DATA.dbNodes)) {
+    RAW_DATA.dbNodes.forEach(checkNode);
+  }
 
   if (RAW_DATA && RAW_DATA.metaById) {
-    RAW_DATA.metaById.forEach((meta, id) => {
-      if (resolved.has(id)) return;
+    const validIds = RAW_DATA.nodes ? new Set(RAW_DATA.nodes.map((n) => String(n.id))) : null;
+    RAW_DATA.metaById.forEach((meta, rawId) => {
+      const id = String(rawId);
+      if (id.startsWith("__dummy") || resolved.has(id)) return;
+      if (validIds && !validIds.has(id)) return;
       if (matchesTarget(id)) { resolved.add(id); return; }
+      if (meta.rap_id && matchesTarget(meta.rap_id)) { resolved.add(id); return; }
       if (meta.identifier && matchesTarget(meta.identifier)) { resolved.add(id); return; }
       if (meta.msu_id && matchesTarget(meta.msu_id, true)) { resolved.add(id); return; }
       if (meta.symbol && matchesTarget(meta.symbol)) { resolved.add(id); return; }
@@ -104,8 +152,8 @@ window.resolveTargetIds = function (rawTargets) {
         const keys = ["MSU_ID", "MSU ID", "msu_id", "RAP_ID", "RAP ID", "Identifier", "identifier", "Symbol", "symbol"];
         for (const k of keys) {
           if (meta.metadata[k]) {
-            const parts = String(meta.metadata[k]).split(/[,;\t]+/).map(s => s.trim()).filter(Boolean);
-            if (parts.some(p => matchesTarget(p, k.toUpperCase().includes("MSU")))) {
+            const isMsuKey = k.toUpperCase().includes("MSU");
+            if (matchesTarget(meta.metadata[k], isMsuKey)) {
               resolved.add(id);
               return;
             }
@@ -587,8 +635,8 @@ window.runFilter = async function () {
 
   for (const idx of keptEdgeIndices) {
     const l = RAW_DATA.links[idx];
-    const s = l.source?.id || l.source;
-    const t = l.target?.id || l.target;
+    const s = String(l.source?.id || l.source);
+    const t = String(l.target?.id || l.target);
     finalNodeIds.add(s);
     finalNodeIds.add(t);
     subgraphLinks.push(l);
@@ -600,7 +648,7 @@ window.runFilter = async function () {
   rng = mulberry32(typeof _seed !== "undefined" ? _seed : 42);
 
   const subNodes = RAW_DATA.nodes
-    .filter((n) => finalNodeIds.has(n.id))
+    .filter((n) => finalNodeIds.has(String(n.id)))
     .map((n) => {
       const newNode = {
         ...n,
@@ -611,7 +659,8 @@ window.runFilter = async function () {
       };
       applyMetaToNode(newNode);
       applyTypeStyling(newNode);
-      if (startNodes.has(newNode.id)) {
+      if (startNodes.has(String(newNode.id))) {
+        newNode.isTarget = true;
         newNode.color =
           typeof CONFIG !== "undefined" && CONFIG.visuals
             ? CONFIG.visuals.colors.Green
@@ -623,10 +672,13 @@ window.runFilter = async function () {
       return newNode;
     });
 
-  const subNodesMap = new Set(subNodes.map((n) => n.id));
+  const subNodesMap = new Set(subNodes.map((n) => String(n.id)));
   targetSet.forEach((tId) => {
-    if (!subNodesMap.has(tId)) {
-      const originalNode = (RAW_DATA.nodes && RAW_DATA.nodes.find((n) => n.id === tId)) || (RAW_DATA.dbNodes && RAW_DATA.dbNodes.find((n) => n.id === tId));
+    const strTId = String(tId);
+    if (!subNodesMap.has(strTId)) {
+      const originalNode =
+        (RAW_DATA.nodes && RAW_DATA.nodes.find((n) => String(n.id) === strTId)) ||
+        (!window.IS_IMPORTED_NETWORK && RAW_DATA.dbNodes && RAW_DATA.dbNodes.find((n) => String(n.id) === strTId));
       if (originalNode) {
         const newNode = {
           ...originalNode,
@@ -635,6 +687,7 @@ window.runFilter = async function () {
           vx: 0,
           vy: 0,
           isRogue: true,
+          isTarget: true,
         };
         applyMetaToNode(newNode);
         applyTypeStyling(newNode);
