@@ -34,25 +34,41 @@ function initIRPControls() {
     const slider = document.getElementById("irp-slider");
     const number = document.getElementById("irp-number");
     const display = document.getElementById("irp-val-display");
+    let irpDebounceTimer = null;
 
-    function update(val) {
+    function clampThreshold(val) {
       let v = parseFloat(val);
       if (isNaN(v)) v = 0;
       if (v > 1) v = 1;
       if (v < 0) v = 0;
+      return v;
+    }
 
+    function applyThreshold(v) {
       IRP_STATE.threshold = v;
-      slider.value = v;
-      number.value = v;
-      display.innerText = v.toFixed(2);
-
       if (typeof window.applyEdgeFilter === "function") {
         window.applyEdgeFilter();
       }
     }
 
-    slider.addEventListener("input", (e) => update(e.target.value));
-    number.addEventListener("change", (e) => update(e.target.value));
+    function updateUI(val) {
+      const v = clampThreshold(val);
+      slider.value = v;
+      number.value = v;
+      display.innerText = v.toFixed(2);
+      return v;
+    }
+
+    slider.addEventListener("input", (e) => {
+      const v = updateUI(e.target.value);
+      clearTimeout(irpDebounceTimer);
+      irpDebounceTimer = setTimeout(() => applyThreshold(v), 175);
+    });
+    number.addEventListener("change", (e) => {
+      clearTimeout(irpDebounceTimer);
+      const v = updateUI(e.target.value);
+      applyThreshold(v);
+    });
   }
 }
 

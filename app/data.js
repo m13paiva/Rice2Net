@@ -57,6 +57,26 @@ function buildAdjacency(nodeList, linkList) {
 }
 
 /**
+ * Returns a cached adjacency map for the full active master topology (RAW_DATA.nodes/links),
+ * rebuilding only when RAW_DATA.links reference changes (init, import, or revert).
+ * @returns {Map<string, Array<{n: string, idx: number}>>} Full adjacency map.
+ */
+function getFullAdjacency() {
+  if (
+    RAW_DATA.fullAdjacency &&
+    RAW_DATA._fullAdjacencyLinksRef === RAW_DATA.links
+  ) {
+    return RAW_DATA.fullAdjacency;
+  }
+  RAW_DATA.fullAdjacency = buildAdjacency(
+    RAW_DATA.nodes || [],
+    RAW_DATA.links || []
+  );
+  RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+  return RAW_DATA.fullAdjacency;
+}
+
+/**
  * Applies IRP threshold filtering and target gene isolation to update active graph nodes and links.
  */
 window.applyEdgeFilter = function () {
@@ -158,7 +178,7 @@ window.applyEdgeFilter = function () {
 };
 
 /**
- * Batches and fetches regulation relationship directions from the Neo4j API endpoint.
+ * Batches and fetches regulation relationship directions via RICE2NET_API.
  */
 window.fetchRegulationEdges = async function () {
   const pendingEdges = links.filter((l) => !l.reg_matched);
@@ -177,21 +197,36 @@ window.fetchRegulationEdges = async function () {
   const batchSize = 500;
   const totalBatches = Math.ceil(pendingEdges.length / batchSize);
 
-  const edgeMap = new Map();
-  links.forEach((l) => {
-    const key = `${l.source.id || l.source}-${l.target.id || l.target}`;
-    edgeMap.set(key, l);
+  // Map queried (RAP) pair key -> active link(s) + mapping back to active node IDs
+  const pendingByQueryKey = new Map();
+  pendingEdges.forEach((l) => {
+    const sNodeId = String(l.source?.id || l.source);
+    const tNodeId = String(l.target?.id || l.target);
+    const sQueryId = String(l.source?.rap_id || sNodeId);
+    const tQueryId = String(l.target?.rap_id || tNodeId);
+    const key = `${sQueryId}-${tQueryId}`;
+    if (!pendingByQueryKey.has(key)) pendingByQueryKey.set(key, []);
+    pendingByQueryKey.get(key).push({
+      edge: l,
+      sNodeId,
+      tNodeId,
+      sQueryId,
+      tQueryId,
+    });
   });
 
-  const sourceEdgeMap = new Map();
-  if (RAW_DATA && RAW_DATA.links) {
-    RAW_DATA.links.forEach((l) => {
-      const sId = String(l.source?.id || l.source);
-      const tId = String(l.target?.id || l.target);
-      sourceEdgeMap.set(`${sId}-${tId}`, l);
-      sourceEdgeMap.set(`${tId}-${sId}`, l);
-    });
-  }
+  // Helper to update matching raw edge in RAW_DATA.links without building a 1.77M-entry Map
+  const fullAdj = getFullAdjacency();
+  const findRawEdge = (sId, tId) => {
+    const neighbors = fullAdj.get(sId);
+    if (!neighbors || !RAW_DATA.links) return null;
+    for (let i = 0; i < neighbors.length; i++) {
+      if (neighbors[i].n === tId) {
+        return RAW_DATA.links[neighbors[i].idx] || null;
+      }
+    }
+    return null;
+  };
 
   try {
     for (let i = 0; i < totalBatches; i++) {
@@ -200,44 +235,49 @@ window.fetchRegulationEdges = async function () {
       const batch = pendingEdges.slice(start, end);
 
       const pairs = batch.map((l) => ({
-        s: String(l.source.id || l.source),
-        t: String(l.target.id || l.target),
+        s: String(l.source?.rap_id || l.source?.id || l.source),
+        t: String(l.target?.rap_id || l.target?.id || l.target),
       }));
 
-      const response = await fetch(
-        `${typeof API_BASE !== "undefined" ? API_BASE : ""}/api/network/edges/regulates`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pairs }),
-        }
-      );
+      const data = await window.RICE2NET_API.checkRegulates(pairs);
 
-      if (!response.ok) throw new Error(`Batch ${i + 1} failed`);
-
-      const data = await response.json();
-
-      data.edges.forEach((e) => {
+      (data.edges || []).forEach((e) => {
         const key = `${e.original_s}-${e.original_t}`;
+        const matches = pendingByQueryKey.get(key);
+        if (!matches) return;
 
-        if (edgeMap.has(key)) {
-          const edge = edgeMap.get(key);
-          edge.has_regulates = e.directions && e.directions.length > 0;
-          edge.directions = e.directions;
-        }
+        matches.forEach(({ edge, sNodeId, tNodeId, sQueryId, tQueryId }) => {
+          const mappedDirs = (e.directions || []).map((d) => {
+            let src = d.src;
+            let tgt = d.tgt;
+            if (d.src === sQueryId && d.tgt === tQueryId) {
+              src = sNodeId;
+              tgt = tNodeId;
+            } else if (d.src === tQueryId && d.tgt === sQueryId) {
+              src = tNodeId;
+              tgt = sNodeId;
+            }
+            return { src, tgt };
+          });
 
-        if (sourceEdgeMap.has(key)) {
-          const rawEdge = sourceEdgeMap.get(key);
-          rawEdge.has_regulates = e.directions && e.directions.length > 0;
-          rawEdge.directions = e.directions;
-        }
+          const hasReg = mappedDirs.length > 0;
+          edge.has_regulates = hasReg;
+          edge.directions = mappedDirs;
+
+          const rawEdge = findRawEdge(sNodeId, tNodeId);
+          if (rawEdge && rawEdge !== edge) {
+            rawEdge.has_regulates = hasReg;
+            rawEdge.directions = mappedDirs;
+          }
+        });
       });
 
       batch.forEach((l) => {
         l.reg_matched = true;
-        const sId = String(l.source.id || l.source);
-        const tId = String(l.target.id || l.target);
-        if (sourceEdgeMap.has(`${sId}-${tId}`)) sourceEdgeMap.get(`${sId}-${tId}`).reg_matched = true;
+        const sId = String(l.source?.id || l.source);
+        const tId = String(l.target?.id || l.target);
+        const rawEdge = findRawEdge(sId, tId);
+        if (rawEdge) rawEdge.reg_matched = true;
       });
 
       if (loaderText && progressBar) {
@@ -246,7 +286,9 @@ window.fetchRegulationEdges = async function () {
         progressBar.style.width = `${pct}%`;
       }
 
-      await new Promise((r) => setTimeout(r, 30));
+      if (totalBatches > 1) {
+        await new Promise((r) => setTimeout(r, 15));
+      }
     }
 
     if (typeof window.draw === "function") requestAnimationFrame(window.draw);
@@ -259,7 +301,7 @@ window.fetchRegulationEdges = async function () {
 };
 
 /**
- * Loads functional cluster definitions and gene assignments from the backend API.
+ * Loads functional cluster definitions and gene assignments via RICE2NET_API.
  */
 async function loadClusters() {
   const loaderText = document.getElementById("loader-text");
@@ -270,10 +312,7 @@ async function loadClusters() {
   CLUSTER_STATE.data.clear();
 
   try {
-    const response = await fetch(`${typeof API_BASE !== "undefined" ? API_BASE : ""}/api/network/clusters`);
-    if (!response.ok) throw new Error("Failed to fetch clusters from API");
-
-    const data = await response.json();
+    const data = await window.RICE2NET_API.getClusters();
     if (data && data.clusters) {
       data.clusters.forEach((cluster, index) => {
         const name = cluster.name;
@@ -438,15 +477,14 @@ async function main() {
   await new Promise(r => setTimeout(r, 50));
 
   try {
-    const response = await fetch(`${typeof API_BASE !== "undefined" ? API_BASE : ""}/api/network/init`);
-    if (!response.ok) throw new Error("API connection failed");
+    const graphData = await window.RICE2NET_API.initNetwork();
 
-    const graphData = await response.json();
-
-    RAW_DATA.dbNodes = graphData.nodes.map(n => ({...n}));
-    RAW_DATA.dbLinks = graphData.edges.map(e => ({...e}));
-    RAW_DATA.nodes = graphData.nodes || [];
-    RAW_DATA.links = graphData.edges || [];
+    // Keep single immutable baseline references (avoid cloning ~885k edges on startup)
+    RAW_DATA.embeddedNodes = graphData.nodes || [];
+    RAW_DATA.embeddedLinks = graphData.edges || [];
+    RAW_DATA.dbNodes = RAW_DATA.embeddedNodes;
+    RAW_DATA.nodes = RAW_DATA.embeddedNodes;
+    RAW_DATA.links = RAW_DATA.embeddedLinks;
 
     nodes = RAW_DATA.nodes.map((n) => ({ ...n }));
     RAW_DATA.workingNodes = nodes;
@@ -484,18 +522,25 @@ async function main() {
       .map((e) => ({
         source: nodeMap.get(String(e.source?.id || e.source)),
         target: nodeMap.get(String(e.target?.id || e.target)),
-        weight: e.weight || e.value || 1,
+        weight:
+          e.weight !== undefined && e.weight !== null
+            ? e.weight
+            : e.value !== undefined && e.value !== null
+            ? e.value
+            : 1,
         irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
         sign: e.sign || null,
         has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
         has_regulates: e.has_regulates || false,
         directions: e.directions || null,
         binds: e.binds || null,
-        reg_matched: false
+        reg_matched: !!e.reg_matched,
       }))
       .filter((l) => l.source && l.target);
 
     RAW_DATA.adjacency = buildAdjacency(nodes, links);
+    RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
+    RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
 
     if (nodes.length > 0 && nodes.some((n) => n.x !== undefined && n.x !== null)) {
       if (loaderText) loaderText.innerText = "RENDERING...";
@@ -511,7 +556,7 @@ async function main() {
       if (typeof startCalculation === "function") startCalculation(true);
     }
   } catch (error) {
-    console.error("Failed to fetch from Neo4j API.", error);
+    console.error("Failed to fetch initial network.", error);
     if (loaderText) loaderText.innerText = "Error: Database connection failed";
     if (document.body && document.body.classList) document.body.classList.remove("is-loading");
   }
@@ -590,13 +635,19 @@ window.revertToEmbeddedNetworkCore = async function () {
   await nextPaint();
 
   try {
-    if (RAW_DATA && Array.isArray(RAW_DATA.dbNodes) && RAW_DATA.dbNodes.length > 0 && Array.isArray(RAW_DATA.dbLinks)) {
+    if (
+      RAW_DATA &&
+      Array.isArray(RAW_DATA.embeddedNodes) &&
+      RAW_DATA.embeddedNodes.length > 0 &&
+      Array.isArray(RAW_DATA.embeddedLinks)
+    ) {
       if (loaderText) loaderText.innerText = "RESTORING EMBEDDED TOPOLOGY...";
       if (progressBar) progressBar.style.width = "30%";
       await nextPaint();
 
-      RAW_DATA.nodes = RAW_DATA.dbNodes.map((n) => ({ ...n }));
-      RAW_DATA.links = RAW_DATA.dbLinks.map((e) => ({ ...e }));
+      RAW_DATA.nodes = RAW_DATA.embeddedNodes;
+      RAW_DATA.links = RAW_DATA.embeddedLinks;
+      RAW_DATA.dbNodes = RAW_DATA.embeddedNodes;
 
       nodes = RAW_DATA.nodes.map((n) => ({ ...n }));
       RAW_DATA.workingNodes = nodes;
@@ -633,18 +684,25 @@ window.revertToEmbeddedNetworkCore = async function () {
         .map((e) => ({
           source: nodeMap.get(String(e.source?.id || e.source)),
           target: nodeMap.get(String(e.target?.id || e.target)),
-          weight: e.weight || e.value || 1,
+          weight:
+            e.weight !== undefined && e.weight !== null
+              ? e.weight
+              : e.value !== undefined && e.value !== null
+              ? e.value
+              : 1,
           irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
           sign: e.sign || null,
           has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
           has_regulates: e.has_regulates || false,
           directions: e.directions || null,
           binds: e.binds || null,
-          reg_matched: false,
+          reg_matched: !!e.reg_matched,
         }))
         .filter((l) => l.source && l.target);
 
       RAW_DATA.adjacency = buildAdjacency(nodes, links);
+      RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
+      RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
 
       if (typeof updateClusterAvailability === "function") updateClusterAvailability();
 
@@ -670,5 +728,6 @@ window.revertToEmbeddedNetworkCore = async function () {
 window.__APP_CORE__.main = main;
 window.__APP_CORE__.hydrateMetadata = hydrateMetadata;
 window.__APP_CORE__.buildAdjacency = buildAdjacency;
+window.__APP_CORE__.getFullAdjacency = getFullAdjacency;
 window.__APP_CORE__.cacheMetaSnapshot = cacheMetaSnapshot;
 window.__APP_CORE__.revertToEmbeddedNetworkCore = window.revertToEmbeddedNetworkCore;
