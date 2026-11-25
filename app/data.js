@@ -19,6 +19,14 @@ document.head.appendChild(clusterStyle);
  * Updates cluster legend availability state based on filtering and custom import status.
  */
 window.updateClusterAvailability = function () {
+  if (!window.CLUSTERS_ENABLED) {
+    CLUSTER_STATE.isAvailable = false;
+    document.body.classList.add("hide-clusters");
+    if (CLUSTER_STATE.active.size > 0) CLUSTER_STATE.active.clear();
+    if (typeof window.renderClusterLegend === "function") window.renderClusterLegend();
+    return;
+  }
+
   const isFiltered = window.IS_FILTERED_NETWORK || (nodes.length > 0 && RAW_DATA.nodes && nodes.length < RAW_DATA.nodes.length);
   CLUSTER_STATE.isAvailable = !(window.IS_IMPORTED_NETWORK || isFiltered);
 
@@ -363,12 +371,17 @@ window.fetchRegulationEdges = async function () {
  * Loads functional cluster definitions and gene assignments via RICE2NET_API.
  */
 async function loadClusters() {
-  const loaderText = document.getElementById("loader-text");
-  if (loaderText) loaderText.innerText = "LOADING CLUSTERS FROM DB...";
-
   CLUSTER_STATE.active.clear();
   CLUSTER_STATE.legend = [];
   CLUSTER_STATE.data.clear();
+
+  if (!window.CLUSTERS_ENABLED) {
+    window.updateClusterAvailability();
+    return;
+  }
+
+  const loaderText = document.getElementById("loader-text");
+  if (loaderText) loaderText.innerText = "LOADING CLUSTERS FROM DB...";
 
   try {
     const data = await window.RICE2NET_API.getClusters();
@@ -552,10 +565,12 @@ async function main() {
     window.IS_IMPORTED_NETWORK = false;
     window.IS_FILTERED_NETWORK = false;
 
-    if (typeof loadClusters === "function") {
+    if (window.CLUSTERS_ENABLED && typeof loadClusters === "function") {
         if (loaderText) loaderText.innerText = "FETCHING CLUSTERS...";
         if (progressBar) progressBar.style.width = "40%";
         await loadClusters();
+    } else if (typeof window.updateClusterAvailability === "function") {
+        window.updateClusterAvailability();
     }
 
     if (loaderText) loaderText.innerText = "PREPARING METADATA...";
@@ -712,11 +727,13 @@ window.revertToEmbeddedNetworkCore = async function () {
       RAW_DATA.workingNodes = nodes;
       RAW_DATA.workingLinks = null;
 
-      if (typeof loadClusters === "function") {
+      if (window.CLUSTERS_ENABLED && typeof loadClusters === "function") {
         if (loaderText) loaderText.innerText = "FETCHING CLUSTERS...";
         if (progressBar) progressBar.style.width = "55%";
         await nextPaint();
         await loadClusters();
+      } else if (typeof window.updateClusterAvailability === "function") {
+        window.updateClusterAvailability();
       }
 
       if (loaderText) loaderText.innerText = "PREPARING METADATA & LINKS...";

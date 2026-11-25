@@ -547,7 +547,7 @@ async function showNodeDetails(node) {
 
   html += `<div class="detail-row"><div class="detail-label">Type</div><div class="detail-value">${fallbackSpec.label}</div></div>`;
 
-  if (typeof CLUSTER_STATE !== "undefined" && CLUSTER_STATE.isAvailable !== false && CLUSTER_STATE.data.has(node.id)) {
+  if (window.CLUSTERS_ENABLED && typeof CLUSTER_STATE !== "undefined" && CLUSTER_STATE.isAvailable !== false && CLUSTER_STATE.data.has(node.id)) {
     const clusterName = CLUSTER_STATE.data.get(node.id);
     if (CLUSTER_STATE.active.has(clusterName)) {
         html += `<div class="detail-row"><div class="detail-label">Cluster</div><div class="detail-value">${clusterName}</div></div>`;

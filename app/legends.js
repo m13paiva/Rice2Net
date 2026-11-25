@@ -240,7 +240,7 @@ window.renderClusterLegend = function () {
   const container = document.getElementById("legend-clusters");
   if (!container) return;
 
-  if (CLUSTER_STATE.legend.length === 0 || CLUSTER_STATE.isAvailable === false) {
+  if (!window.CLUSTERS_ENABLED || CLUSTER_STATE.legend.length === 0 || CLUSTER_STATE.isAvailable === false) {
     container.style.display = "none";
     container.innerHTML = "";
     return;
