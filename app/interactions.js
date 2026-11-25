@@ -6,119 +6,48 @@
  */
 
 /**
- * Collects candidate edge indices from nodes near (wx, wy) or inside the visible viewport
- * using the D3 quadtree so hover/click hit-testing avoids linearly scanning hundreds of thousands of edges.
- */
-function collectNearbyCandidateEdges(wx, wy, isHover) {
-  const maxVisibleEdges =
-    typeof PERFORMANCE_LIMIT_EDGES !== "undefined" ? PERFORMANCE_LIMIT_EDGES : 40000;
-
-  if (links.length <= maxVisibleEdges || !quadtree || !RAW_DATA || !RAW_DATA.adjacency) {
-    return links;
-  }
-
-  const w = typeof width !== "undefined" ? width : window.innerWidth || 1000;
-  const h = typeof height !== "undefined" ? height : window.innerHeight || 1000;
-  const invK = 1 / (transform.k || 1);
-  const pad = 60 * invK;
-
-  // Use visible viewport bounds (always including a margin around the cursor)
-  const vMinX = Math.min(-transform.x * invK - pad, wx - pad);
-  const vMaxX = Math.max((w - transform.x) * invK + pad, wx + pad);
-  const vMinY = Math.min(-transform.y * invK - pad, wy - pad);
-  const vMaxY = Math.max((h - transform.y) * invK + pad, wy + pad);
-
-  const seenIdx = new Set();
-  const candidates = [];
-  let exceeded = false;
-
-  quadtree.visit((qNode, x0, y0, x1, y1) => {
-    if (exceeded) return true;
-    if (x0 > vMaxX || x1 < vMinX || y0 > vMaxY || y1 < vMinY) return true;
-    if (!qNode.length) {
-      let leaf = qNode;
-      while (leaf) {
-        const d = leaf.data;
-        if (
-          d &&
-          d.x != null &&
-          d.y != null &&
-          d.x >= vMinX &&
-          d.x <= vMaxX &&
-          d.y >= vMinY &&
-          d.y <= vMaxY
-        ) {
-          const adjEntries = RAW_DATA.adjacency.get(String(d.id));
-          if (adjEntries) {
-            for (let j = 0; j < adjEntries.length; j++) {
-              const idx = adjEntries[j].idx;
-              if (!seenIdx.has(idx)) {
-                seenIdx.add(idx);
-                if (isHover && seenIdx.size > maxVisibleEdges) {
-                  exceeded = true;
-                  return true;
-                }
-                const edge = links[idx];
-                if (edge) candidates.push(edge);
-              }
-            }
-          }
-        }
-        leaf = leaf.next;
-      }
-    }
-    return false;
-  });
-
-  if (exceeded) return null;
-  return candidates;
-}
-
-/**
  * Finds the closest visible edge near the target canvas coordinates.
+ * Uses an allocation-free AABB-first scan so even 885k+ edge graphs resolve in a few milliseconds
+ * without missing long edges whose endpoints lie outside the current viewport.
  * @param {number} wx - World X coordinate.
  * @param {number} wy - World Y coordinate.
  * @param {number} threshold - Hit test distance threshold.
- * @param {boolean} isHover - True when called from mousemove hover picking.
  * @returns {Object|null} Closest hovered edge or null.
  */
-function getHoveredEdge(wx, wy, threshold, isHover = false) {
-  const candidateLinks = collectNearbyCandidateEdges(wx, wy, isHover);
-  if (!candidateLinks || candidateLinks.length === 0) return null;
+function getHoveredEdge(wx, wy, threshold) {
+  if (!links || links.length === 0) return null;
 
   let closestEdge = null;
   let minDistSq = threshold * threshold;
 
   const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
+  const hasCustomVisibility = typeof window.isEdgeVisible === "function";
   const transparentColor = CONFIG.visuals.colors.Transparent;
+  const showRogue = !!VISIBILITY_STATE.Rogue;
 
-  for (let i = 0; i < candidateLinks.length; i++) {
-    const l = candidateLinks[i];
-    const isVisible = window.isEdgeVisible ? window.isEdgeVisible(l) : true;
-    if (!isVisible) continue;
+  const margin = threshold + 10;
+  const wxMin = wx - margin;
+  const wxMax = wx + margin;
+  const wyMin = wy - margin;
+  const wyMax = wy + margin;
 
-    if (
-      !l.source ||
-      !l.target ||
-      l.source.x == null ||
-      l.source.y == null ||
-      l.target.x == null ||
-      l.target.y == null
-    ) continue;
-    if (l.source.color === transparentColor || l.target.color === transparentColor) continue;
-    if (l.source.isRogue && !VISIBILITY_STATE.Rogue) continue;
-    if (l.target.isRogue && !VISIBILITY_STATE.Rogue) continue;
+  for (let i = 0; i < links.length; i++) {
+    const l = links[i];
+    const s = l.source;
+    const t = l.target;
+    if (!s || !t) continue;
 
-    const sx = l.source.x, sy = l.source.y;
-    const tx = l.target.x, ty = l.target.y;
+    const sx = s.x, sy = s.y;
+    const tx = t.x, ty = t.y;
+    if (sx == null || sy == null || tx == null || ty == null) continue;
 
-    const minBoundX = Math.min(sx, tx) - threshold - 10;
-    const maxBoundX = Math.max(sx, tx) + threshold + 10;
-    if (wx < minBoundX || wx > maxBoundX) continue;
+    // Fast branch-only AABB rejection before visibility/distance checks
+    if ((sx < wxMin && tx < wxMin) || (sx > wxMax && tx > wxMax)) continue;
+    if ((sy < wyMin && ty < wyMin) || (sy > wyMax && ty > wyMax)) continue;
 
-    const minBoundY = Math.min(sy, ty) - threshold - 10;
-    const maxBoundY = Math.max(sy, ty) + threshold + 10;
-    if (wy < minBoundY || wy > maxBoundY) continue;
+    if (s.color === transparentColor || t.color === transparentColor) continue;
+    if ((s.isRogue || t.isRogue) && !showRogue) continue;
+    if (hasCustomVisibility && !window.isEdgeVisible(l)) continue;
 
     const l2 = (sx - tx) ** 2 + (sy - ty) ** 2;
     let dSq = Infinity;
@@ -163,9 +92,9 @@ function getHoveredEdge(wx, wy, threshold, isHover = false) {
         if (l2 === 0) {
             dSq = (wx - sx) ** 2 + (wy - sy) ** 2;
         } else {
-            let t = ((wx - sx) * (tx - sx) + (wy - sy) * (ty - sy)) / l2;
-            t = Math.max(0, Math.min(1, t));
-            dSq = (wx - (sx + t * (tx - sx))) ** 2 + (wy - (sy + t * (ty - sy))) ** 2;
+            let tProj = ((wx - sx) * (tx - sx) + (wy - sy) * (ty - sy)) / l2;
+            tProj = Math.max(0, Math.min(1, tProj));
+            dSq = (wx - (sx + tProj * (tx - sx))) ** 2 + (wy - (sy + tProj * (ty - sy))) ** 2;
         }
 
         if (isThisRegActive && l.directions.length === 1) {
@@ -231,7 +160,7 @@ function onMouseMoveSelect(event) {
 
     const triggerEdgeHover = () => {
       const edgeThreshold = 10 / transform.k + 5;
-      const edge = getHoveredEdge(wx, wy, edgeThreshold, true);
+      const edge = getHoveredEdge(wx, wy, edgeThreshold);
       if (edge) {
         HOVERED_EDGE = edge;
 
@@ -294,7 +223,9 @@ function onClickSelect(event) {
     showNodeDetails(node);
   } else {
     const edgeThreshold = 10 / transform.k + 5;
-    const edge = getHoveredEdge(wx, wy, edgeThreshold);
+    const edge =
+      (typeof HOVERED_EDGE !== "undefined" && HOVERED_EDGE) ||
+      getHoveredEdge(wx, wy, edgeThreshold);
     if (edge) showEdgeDetails(edge);
   }
 }
