@@ -125,12 +125,13 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
       onNext: (record) => {
         if (isClosed) return;
         if (!isFirstNode) res.write(",");
+        const degVal = record.get("deg");
         res.write(
           JSON.stringify({
             id: record.get("id"),
             x: record.get("x"),
             y: record.get("y"),
-            deg: record.get("deg"),
+            deg: degVal !== null && degVal !== undefined && degVal.toNumber ? degVal.toNumber() : degVal,
             originalType: record.get("type") || "Gene",
             symbol: record.get("symbol"),
             msu_id: record.get("msu_id"),
@@ -483,7 +484,11 @@ app.get("/api/network/node/:id", async (req, res) => {
       return res.status(404).json({ error: "Gene not found." });
     }
 
-    res.json(result.records[0].get("metadata"));
+    const meta = result.records[0].get("metadata");
+    if (meta && meta.deg && typeof meta.deg.toNumber === "function") {
+      meta.deg = meta.deg.toNumber();
+    }
+    res.json(meta);
   } catch (error) {
     console.error("Node detail error:", error);
     res.status(500).json({ error: "Failed to retrieve node details." });
