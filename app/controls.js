@@ -59,10 +59,23 @@ function initIRPControls() {
       return v;
     }
 
+    function isLargeIRPNetwork() {
+      const srcNodes = (RAW_DATA && (RAW_DATA.workingNodes || RAW_DATA.nodes)) || nodes;
+      const srcLinks = (RAW_DATA && (RAW_DATA.workingLinks || RAW_DATA.links)) || links;
+      return (
+        (srcNodes && srcNodes.length > PERFORMANCE_LIMIT) ||
+        (srcLinks && srcLinks.length > PERFORMANCE_LIMIT_EDGES)
+      );
+    }
+
     slider.addEventListener("input", (e) => {
       const v = updateUI(e.target.value);
       clearTimeout(irpDebounceTimer);
-      irpDebounceTimer = setTimeout(() => applyThreshold(v), 175);
+      if (isLargeIRPNetwork()) {
+        irpDebounceTimer = setTimeout(() => applyThreshold(v), 1000);
+      } else {
+        applyThreshold(v);
+      }
     });
     number.addEventListener("change", (e) => {
       clearTimeout(irpDebounceTimer);

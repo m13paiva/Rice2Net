@@ -77,10 +77,51 @@ function getFullAdjacency() {
 }
 
 /**
+ * Determines whether a node is currently visible and interactive (eligible for quadtree hit-testing).
+ * @param {Object} n - Node object.
+ * @returns {boolean} True if node is visible and interactive.
+ */
+window.isNodeInteractive = function (n) {
+  if (!n || n.isDummy || String(n.id).startsWith("__dummy")) return false;
+  if (n.x == null || n.y == null) return false;
+  if (n.color === CONFIG.visuals.colors.Transparent) return false;
+  if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) return false;
+  return true;
+};
+
+/**
+ * Rebuilds the spatial quadtree containing only currently visible/interactive nodes
+ * so hidden or IRP-filtered nodes cannot be hovered, clicked, or block underlying edges.
+ */
+window.rebuildInteractiveQuadtree = function () {
+  if (typeof d3 === "undefined") return;
+  const interactiveNodes = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (window.isNodeInteractive(n)) {
+      interactiveNodes.push(n);
+    }
+  }
+  quadtree = d3
+    .quadtree()
+    .x((d) => d.x)
+    .y((d) => d.y)
+    .addAll(interactiveNodes);
+};
+
+/**
  * Applies IRP threshold filtering and target gene isolation to update active graph nodes and links.
  */
 window.applyEdgeFilter = function () {
   const threshold = IRP_STATE.threshold;
+
+  // Clear stale hover state so filtered-out edges/nodes cannot stay highlighted or clicked
+  if (typeof HOVERED_EDGE !== "undefined") HOVERED_EDGE = null;
+  const tooltipEl = document.getElementById("tooltip");
+  if (tooltipEl) tooltipEl.style.display = "none";
+  if (typeof canvas !== "undefined" && canvas && canvas.classList) {
+    canvas.classList.remove("hovering");
+  }
 
   let sourceNodes = RAW_DATA.workingNodes;
   if (!sourceNodes) {
@@ -89,20 +130,33 @@ window.applyEdgeFilter = function () {
   }
 
   const sourceLinks = RAW_DATA.workingLinks || RAW_DATA.links;
-  const nodeMap = new Map(sourceNodes.map((n) => [String(n.id), n]));
+  const nodeMap = new Map();
+  const counts = new Map();
+  for (let i = 0; i < sourceNodes.length; i++) {
+    const n = sourceNodes[i];
+    const idStr = String(n.id);
+    nodeMap.set(idStr, n);
+    counts.set(idStr, 0);
+  }
 
-  links = sourceLinks
-    .filter((l) => {
-      const score = l.irp !== undefined && l.irp !== null ? l.irp : 0;
-      if (score < threshold) return false;
+  const nextLinks = [];
+  for (let i = 0; i < sourceLinks.length; i++) {
+    const l = sourceLinks[i];
+    const score = l.irp !== undefined && l.irp !== null ? l.irp : 0;
+    if (score < threshold) continue;
 
-      const sId = String(l.source?.id || l.source);
-      const tId = String(l.target?.id || l.target);
-      return nodeMap.has(sId) && nodeMap.has(tId);
-    })
-    .map((l) => ({
-      source: nodeMap.get(String(l.source?.id || l.source)),
-      target: nodeMap.get(String(l.target?.id || l.target)),
+    const sId = String(l.source?.id || l.source);
+    const tId = String(l.target?.id || l.target);
+    const sNode = nodeMap.get(sId);
+    const tNode = nodeMap.get(tId);
+    if (!sNode || !tNode) continue;
+
+    counts.set(sId, (counts.get(sId) || 0) + 1);
+    counts.set(tId, (counts.get(tId) || 0) + 1);
+
+    nextLinks.push({
+      source: sNode,
+      target: tNode,
       weight: l.weight,
       irp: l.irp !== undefined && l.irp !== null ? l.irp : null,
       sign: l.sign || null,
@@ -110,17 +164,10 @@ window.applyEdgeFilter = function () {
       has_regulates: l.has_regulates || false,
       directions: l.directions || null,
       binds: l.binds || null,
-      reg_matched: l.reg_matched || false
-    }));
-
-  const counts = new Map();
-  sourceNodes.forEach((n) => counts.set(String(n.id), 0));
-  links.forEach((l) => {
-    const sId = String(l.source.id);
-    const tId = String(l.target.id);
-    counts.set(sId, (counts.get(sId) || 0) + 1);
-    counts.set(tId, (counts.get(tId) || 0) + 1);
-  });
+      reg_matched: l.reg_matched || false,
+    });
+  }
+  links = nextLinks;
 
   const textInput = document.getElementById("target-input");
   const text = textInput ? textInput.value : "";
@@ -132,29 +179,44 @@ window.applyEdgeFilter = function () {
     : new Set(rawTargets);
   const isTargeted = targetSet.size > 0;
 
-  nodes = sourceNodes.filter((n) => {
-    const deg = counts.get(String(n.id)) || 0;
+  const nextNodes = [];
+  for (let i = 0; i < sourceNodes.length; i++) {
+    const n = sourceNodes[i];
+    const idStr = String(n.id);
+    const deg = counts.get(idStr) || 0;
     n.deg = deg;
     if (deg > 0) {
       n.isRogue = false;
-      return true;
-    }
-    if (!isTargeted) {
+      n.dashed = false;
+      nextNodes.push(n);
+    } else if (!isTargeted) {
       n.isRogue = true;
-      return true;
-    } else if (targetSet.has(String(n.id))) {
+      n.dashed = true;
+      nextNodes.push(n);
+    } else if (targetSet.has(idStr)) {
       n.isRogue = true;
-      return true;
+      n.dashed = true;
+      nextNodes.push(n);
     }
-    return false;
-  });
+  }
+  nodes = nextNodes;
 
   if (typeof updateVisualProps === "function") updateVisualProps();
 
   window.IS_FILTERED_NETWORK = (nodes.length < RAW_DATA.nodes.length) || isTargeted || threshold > 0;
   window.updateClusterAvailability();
 
-  RAW_DATA.adjacency = buildAdjacency(nodes, links);
+  if (
+    threshold === 0 &&
+    sourceLinks === RAW_DATA.links &&
+    links.length === RAW_DATA.links.length &&
+    RAW_DATA.fullAdjacency &&
+    RAW_DATA._fullAdjacencyLinksRef === RAW_DATA.links
+  ) {
+    RAW_DATA.adjacency = RAW_DATA.fullAdjacency;
+  } else {
+    RAW_DATA.adjacency = buildAdjacency(nodes, links);
+  }
 
   if (typeof simulation !== "undefined" && simulation) {
     simulation.nodes(nodes);
@@ -163,18 +225,15 @@ window.applyEdgeFilter = function () {
     else simulation.stop();
   }
 
-  if (typeof d3 !== "undefined") {
-    quadtree = d3
-      .quadtree()
-      .x((d) => d.x)
-      .y((d) => d.y)
-      .addAll(nodes);
+  if (typeof window.reapplyColors === "function") {
+    window.reapplyColors();
+  } else {
+    if (typeof updateVisualProps === "function") updateVisualProps();
+    window.rebuildInteractiveQuadtree();
+    if (typeof window.updateActiveCounts === "function") window.updateActiveCounts();
+    if (typeof window.updateTargetCounts === "function") window.updateTargetCounts();
+    if (typeof window.draw === "function") requestAnimationFrame(window.draw);
   }
-
-  if (typeof window.updateActiveCounts === "function") window.updateActiveCounts();
-  if (typeof window.updateTargetCounts === "function") window.updateTargetCounts();
-
-  if (typeof window.draw === "function") requestAnimationFrame(window.draw);
 };
 
 /**

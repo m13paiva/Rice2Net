@@ -169,6 +169,9 @@ window.reapplyColors = function () {
   });
 
   if (typeof updateVisualProps === "function") updateVisualProps();
+  if (typeof window.rebuildInteractiveQuadtree === "function") {
+    window.rebuildInteractiveQuadtree();
+  }
   window.updateTargetCounts();
   if (typeof window.updateActiveCounts === "function") window.updateActiveCounts();
   requestAnimationFrame(window.draw);

@@ -128,9 +128,15 @@ function onMouseMoveSelect(event) {
   clearTimeout(edgeHoverTimer);
   const tooltip = document.getElementById("tooltip");
   const node = quadtree.find(wx, wy, 10 / transform.k + 5);
+  const isInteractiveNode =
+    node &&
+    (typeof window.isNodeInteractive === "function"
+      ? window.isNodeInteractive(node)
+      : node.color !== CONFIG.visuals.colors.Transparent &&
+        (!node.isRogue || VISIBILITY_STATE.Rogue || node.isTarget));
   let needsRedraw = false;
 
-  if (node && node.color !== CONFIG.visuals.colors.Transparent) {
+  if (isInteractiveNode) {
     if (typeof HOVERED_EDGE !== "undefined" && HOVERED_EDGE !== null) {
       HOVERED_EDGE = null;
       needsRedraw = true;
@@ -218,13 +224,22 @@ function onClickSelect(event) {
   const wx = (mx - transform.x) / transform.k;
   const wy = (my - transform.y) / transform.k;
   const node = quadtree.find(wx, wy, 10 / transform.k + 5);
+  const isInteractiveNode =
+    node &&
+    (typeof window.isNodeInteractive === "function"
+      ? window.isNodeInteractive(node)
+      : node.color !== CONFIG.visuals.colors.Transparent &&
+        (!node.isRogue || VISIBILITY_STATE.Rogue || node.isTarget));
 
-  if (node && node.color !== CONFIG.visuals.colors.Transparent) {
+  if (isInteractiveNode) {
     showNodeDetails(node);
   } else {
     const edgeThreshold = 10 / transform.k + 5;
     const edge =
-      (typeof HOVERED_EDGE !== "undefined" && HOVERED_EDGE) ||
+      (typeof HOVERED_EDGE !== "undefined" &&
+        HOVERED_EDGE &&
+        (!window.isEdgeVisible || window.isEdgeVisible(HOVERED_EDGE)) &&
+        HOVERED_EDGE) ||
       getHoveredEdge(wx, wy, edgeThreshold);
     if (edge) showEdgeDetails(edge);
   }
