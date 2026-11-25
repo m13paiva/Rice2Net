@@ -35,11 +35,14 @@ let HOVERED_EDGE = null;
 /** Primary Raw Network Topology Storage */
 let RAW_DATA = { nodes: [], links: [], adjacency: new Map() };
 
-/** Functional Cluster Annotations State */
+/** Functional Cluster Annotations State (dormant when CLUSTERS_ENABLED is false) */
+const CLUSTERS_ENABLED = false;
+window.CLUSTERS_ENABLED = CLUSTERS_ENABLED;
 let CLUSTER_STATE = {
   data: new Map(),
   active: new Set(),
   legend: [],
+  isAvailable: false,
 };
 
 /**

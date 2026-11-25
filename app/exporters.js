@@ -19,7 +19,7 @@ function isNodeVisibleForExport(node, targetSet = null) {
   const baseSpec = window.getTypeVisualSpec ? window.getTypeVisualSpec(node.originalType || "Gene") : { visibilityKey: "Gene" };
   if (VISIBILITY_STATE[baseSpec.visibilityKey] > 0) return true;
 
-  if (CLUSTER_STATE.data.has(node.id)) {
+  if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(node.id)) {
     const clusterName = CLUSTER_STATE.data.get(node.id);
     if (CLUSTER_STATE.active.has(clusterName)) return true;
   }
@@ -445,7 +445,7 @@ window.exportPNG = function () {
         const baseSpec = window.getTypeVisualSpec ? window.getTypeVisualSpec(n.originalType || "Gene") : { visibilityKey: "Gene" };
         presentTypes.add(baseSpec.visibilityKey);
         if (targetSet.has(String(n.id))) hasPresentTarget = true;
-        if (CLUSTER_STATE.data.has(n.id)) presentClusters.add(CLUSTER_STATE.data.get(n.id));
+        if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(n.id)) presentClusters.add(CLUSTER_STATE.data.get(n.id));
       }
 
       if (!hasVisible) { minX = 0; maxX = 800; minY = 0; maxY = 600; }
@@ -480,9 +480,11 @@ window.exportPNG = function () {
       addLegendItem(nodeItems, "AnnotatedGene", CONFIG.visuals.colors.AnnotatedGene, "Annotated Gene", "circle", true);
       addLegendItem(nodeItems, "Gene", CONFIG.visuals.colors.Gene, "Other Gene", "circle", true);
 
-      const activeClusters = [...CLUSTER_STATE.legend]
-        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
-        .filter((c) => CLUSTER_STATE.active.has(c.name) && presentClusters.has(c.name));
+      const activeClusters = window.CLUSTERS_ENABLED
+        ? [...CLUSTER_STATE.legend]
+            .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+            .filter((c) => CLUSTER_STATE.active.has(c.name) && presentClusters.has(c.name))
+        : [];
 
       const items = [];
       if (nodeItems.length > 0) {

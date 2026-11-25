@@ -76,7 +76,7 @@ window.reapplyColors = function () {
     let isTargetMatched = false;
 
     // Evaluate functional cluster overlays
-    if (CLUSTER_STATE.data.has(n.id)) {
+    if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(n.id)) {
       const clusterName = CLUSTER_STATE.data.get(n.id);
       if (CLUSTER_STATE.active.has(clusterName)) {
         const cMeta = CLUSTER_STATE.legend.find((x) => x.name === clusterName);
