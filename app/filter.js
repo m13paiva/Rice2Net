@@ -171,9 +171,13 @@ window.resolveTargetIds = function (rawTargets) {
  * @param {Object} n - Target node object.
  */
 function applyMetaToNode(n) {
-  const m = RAW_DATA.metaById && RAW_DATA.metaById.get(n.id);
+  const m = RAW_DATA.metaById && RAW_DATA.metaById.get(String(n.id));
   if (m) {
     n.originalType = m.originalType || n.originalType || "Gene";
+    n.symbol = n.symbol || m.symbol || "";
+    n.rap_id = n.rap_id || m.rap_id || "";
+    n.identifier = n.identifier || m.identifier || "";
+    n.msu_id = n.msu_id || m.msu_id || "";
     n.metadata = { ...m.metadata };
     n.tfDetail = (m.tfDetail || []).map((x) => ({ ...x }));
     n.keggDetail = (m.keggDetail || []).map((x) => ({ ...x }));
@@ -318,13 +322,16 @@ window.expandNode = function(nodeId) {
     const activeNode = nodes.find(n => String(n.id) === String(nodeId));
     if (!activeNode) return;
 
+    const fullAdj = window.__APP_CORE__.getFullAdjacency
+      ? window.__APP_CORE__.getFullAdjacency()
+      : window.__APP_CORE__.buildAdjacency(RAW_DATA.nodes, RAW_DATA.links);
+
+    const strNodeId = String(nodeId);
     const fullNeighbors = new Set();
-    RAW_DATA.links.forEach(l => {
-        const s = String(l.source.id || l.source);
-        const t = String(l.target.id || l.target);
-        if (s === String(nodeId)) fullNeighbors.add(t);
-        if (t === String(nodeId)) fullNeighbors.add(s);
-    });
+    const myFullEntries = fullAdj.get(strNodeId) || [];
+    for (let i = 0; i < myFullEntries.length; i++) {
+      fullNeighbors.add(myFullEntries[i].n);
+    }
 
     const currentWorkingIds = new Set(RAW_DATA.workingNodes.map(n => String(n.id)));
     const newNeighborIds = new Set([...fullNeighbors].filter(id => !currentWorkingIds.has(id)));
@@ -332,23 +339,22 @@ window.expandNode = function(nodeId) {
     if (newNeighborIds.size === 0) return;
 
     const nodesToAdd = [];
-    const affectedIds = new Set([String(nodeId)]);
+    const affectedIds = new Set([strNodeId]);
 
-    links.forEach(l => {
-        const s = String(l.source.id || l.source);
-        const t = String(l.target.id || l.target);
-        if (s === String(nodeId)) affectedIds.add(t);
-        if (t === String(nodeId)) affectedIds.add(s);
-    });
+    const currentAdj = RAW_DATA.adjacency ? RAW_DATA.adjacency.get(strNodeId) || [] : [];
+    for (let i = 0; i < currentAdj.length; i++) {
+      affectedIds.add(currentAdj[i].n);
+    }
 
     RAW_DATA.nodes.forEach(n => {
-        if (newNeighborIds.has(String(n.id))) {
+        const nId = String(n.id);
+        if (newNeighborIds.has(nId)) {
             const nn = { ...n, x: activeNode.x + (Math.random() * 20 - 10), y: activeNode.y + (Math.random() * 20 - 10), vx: 0, vy: 0 };
             if (typeof applyMetaToNode === "function") applyMetaToNode(nn);
             if (typeof applyTypeStyling === "function") applyTypeStyling(nn);
             nodesToAdd.push(nn);
-            currentWorkingIds.add(String(n.id));
-            affectedIds.add(String(n.id));
+            currentWorkingIds.add(nId);
+            affectedIds.add(nId);
         }
     });
 
@@ -365,27 +371,32 @@ window.expandNode = function(nodeId) {
     );
 
     const newEdges = [];
-    RAW_DATA.links.forEach(l => {
+    const considerLinkByIdx = (idx) => {
+        const l = RAW_DATA.links[idx];
+        if (!l) return;
         const s = String(l.source.id || l.source);
         const t = String(l.target.id || l.target);
         const key = s < t ? `${s}-${t}` : `${t}-${s}`;
-
         if (existingWorkingLinkKeys.has(key)) return;
 
         const sIsNew = newNeighborIds.has(s);
         const tIsNew = newNeighborIds.has(t);
 
-        if ((s === String(nodeId) && tIsNew) || (t === String(nodeId) && sIsNew)) {
+        if ((s === strNodeId && tIsNew) || (t === strNodeId && sIsNew)) {
             newEdges.push(l);
             existingWorkingLinkKeys.add(key);
+        } else if (connectNeighbors && ((sIsNew && currentWorkingIds.has(t)) || (tIsNew && currentWorkingIds.has(s)))) {
+            newEdges.push(l);
+            existingWorkingLinkKeys.add(key);
+            affectedIds.add(s);
+            affectedIds.add(t);
         }
-        else if (connectNeighbors) {
-            if ((sIsNew && currentWorkingIds.has(t)) || (tIsNew && currentWorkingIds.has(s))) {
-                newEdges.push(l);
-                existingWorkingLinkKeys.add(key);
-                affectedIds.add(s);
-                affectedIds.add(t);
-            }
+    };
+
+    newNeighborIds.forEach((nId) => {
+        const entries = fullAdj.get(nId) || [];
+        for (let i = 0; i < entries.length; i++) {
+            considerLinkByIdx(entries[i].idx);
         }
     });
 
@@ -525,10 +536,9 @@ window.runFilter = async function () {
     window.updateIRPControlUI(0);
   }
 
-  const fullAdjacency = window.__APP_CORE__.buildAdjacency(
-    RAW_DATA.nodes,
-    RAW_DATA.links,
-  );
+  const fullAdjacency = window.__APP_CORE__.getFullAdjacency
+    ? window.__APP_CORE__.getFullAdjacency()
+    : window.__APP_CORE__.buildAdjacency(RAW_DATA.nodes, RAW_DATA.links);
 
   const startNodes = new Set();
   targetSet.forEach((t) => {
@@ -673,12 +683,22 @@ window.runFilter = async function () {
     });
 
   const subNodesMap = new Set(subNodes.map((n) => String(n.id)));
+  const rawNodeById = new Map();
+  if (RAW_DATA.nodes) {
+    for (let i = 0; i < RAW_DATA.nodes.length; i++) {
+      rawNodeById.set(String(RAW_DATA.nodes[i].id), RAW_DATA.nodes[i]);
+    }
+  }
+  if (!window.IS_IMPORTED_NETWORK && RAW_DATA.dbNodes && RAW_DATA.dbNodes !== RAW_DATA.nodes) {
+    for (let i = 0; i < RAW_DATA.dbNodes.length; i++) {
+      const k = String(RAW_DATA.dbNodes[i].id);
+      if (!rawNodeById.has(k)) rawNodeById.set(k, RAW_DATA.dbNodes[i]);
+    }
+  }
   targetSet.forEach((tId) => {
     const strTId = String(tId);
     if (!subNodesMap.has(strTId)) {
-      const originalNode =
-        (RAW_DATA.nodes && RAW_DATA.nodes.find((n) => String(n.id) === strTId)) ||
-        (!window.IS_IMPORTED_NETWORK && RAW_DATA.dbNodes && RAW_DATA.dbNodes.find((n) => String(n.id) === strTId));
+      const originalNode = rawNodeById.get(strTId);
       if (originalNode) {
         const newNode = {
           ...originalNode,

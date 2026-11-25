@@ -6,25 +6,106 @@
  */
 
 /**
+ * Collects candidate edge indices from nodes near (wx, wy) or inside the visible viewport
+ * using the D3 quadtree so hover/click hit-testing avoids linearly scanning hundreds of thousands of edges.
+ */
+function collectNearbyCandidateEdges(wx, wy, isHover) {
+  const maxVisibleEdges =
+    typeof PERFORMANCE_LIMIT_EDGES !== "undefined" ? PERFORMANCE_LIMIT_EDGES : 40000;
+
+  if (links.length <= maxVisibleEdges || !quadtree || !RAW_DATA || !RAW_DATA.adjacency) {
+    return links;
+  }
+
+  const w = typeof width !== "undefined" ? width : window.innerWidth || 1000;
+  const h = typeof height !== "undefined" ? height : window.innerHeight || 1000;
+  const invK = 1 / (transform.k || 1);
+  const pad = 60 * invK;
+
+  // Use visible viewport bounds (always including a margin around the cursor)
+  const vMinX = Math.min(-transform.x * invK - pad, wx - pad);
+  const vMaxX = Math.max((w - transform.x) * invK + pad, wx + pad);
+  const vMinY = Math.min(-transform.y * invK - pad, wy - pad);
+  const vMaxY = Math.max((h - transform.y) * invK + pad, wy + pad);
+
+  const seenIdx = new Set();
+  const candidates = [];
+  let exceeded = false;
+
+  quadtree.visit((qNode, x0, y0, x1, y1) => {
+    if (exceeded) return true;
+    if (x0 > vMaxX || x1 < vMinX || y0 > vMaxY || y1 < vMinY) return true;
+    if (!qNode.length) {
+      let leaf = qNode;
+      while (leaf) {
+        const d = leaf.data;
+        if (
+          d &&
+          d.x != null &&
+          d.y != null &&
+          d.x >= vMinX &&
+          d.x <= vMaxX &&
+          d.y >= vMinY &&
+          d.y <= vMaxY
+        ) {
+          const adjEntries = RAW_DATA.adjacency.get(String(d.id));
+          if (adjEntries) {
+            for (let j = 0; j < adjEntries.length; j++) {
+              const idx = adjEntries[j].idx;
+              if (!seenIdx.has(idx)) {
+                seenIdx.add(idx);
+                if (isHover && seenIdx.size > maxVisibleEdges) {
+                  exceeded = true;
+                  return true;
+                }
+                const edge = links[idx];
+                if (edge) candidates.push(edge);
+              }
+            }
+          }
+        }
+        leaf = leaf.next;
+      }
+    }
+    return false;
+  });
+
+  if (exceeded) return null;
+  return candidates;
+}
+
+/**
  * Finds the closest visible edge near the target canvas coordinates.
  * @param {number} wx - World X coordinate.
  * @param {number} wy - World Y coordinate.
  * @param {number} threshold - Hit test distance threshold.
+ * @param {boolean} isHover - True when called from mousemove hover picking.
  * @returns {Object|null} Closest hovered edge or null.
  */
-function getHoveredEdge(wx, wy, threshold) {
+function getHoveredEdge(wx, wy, threshold, isHover = false) {
+  const candidateLinks = collectNearbyCandidateEdges(wx, wy, isHover);
+  if (!candidateLinks || candidateLinks.length === 0) return null;
+
   let closestEdge = null;
   let minDistSq = threshold * threshold;
 
   const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
+  const transparentColor = CONFIG.visuals.colors.Transparent;
 
-  for (let i = 0; i < links.length; i++) {
-    const l = links[i];
+  for (let i = 0; i < candidateLinks.length; i++) {
+    const l = candidateLinks[i];
     const isVisible = window.isEdgeVisible ? window.isEdgeVisible(l) : true;
     if (!isVisible) continue;
 
-    if (!l.source.x || !l.target.x) continue;
-    if (l.source.color === CONFIG.visuals.colors.Transparent || l.target.color === CONFIG.visuals.colors.Transparent) continue;
+    if (
+      !l.source ||
+      !l.target ||
+      l.source.x == null ||
+      l.source.y == null ||
+      l.target.x == null ||
+      l.target.y == null
+    ) continue;
+    if (l.source.color === transparentColor || l.target.color === transparentColor) continue;
     if (l.source.isRogue && !VISIBILITY_STATE.Rogue) continue;
     if (l.target.isRogue && !VISIBILITY_STATE.Rogue) continue;
 
@@ -150,7 +231,7 @@ function onMouseMoveSelect(event) {
 
     const triggerEdgeHover = () => {
       const edgeThreshold = 10 / transform.k + 5;
-      const edge = getHoveredEdge(wx, wy, edgeThreshold);
+      const edge = getHoveredEdge(wx, wy, edgeThreshold, true);
       if (edge) {
         HOVERED_EDGE = edge;
 
@@ -325,12 +406,10 @@ window.showEdgeDetails = async function (edge) {
     bindsContainer.innerHTML = `<div style="text-align:center; padding:10px; color:#aaa;">Fetching detailed binding events...</div>`;
 
     try {
-      const apiBase = typeof API_BASE !== "undefined" ? API_BASE : "";
-      const response = await fetch(`${apiBase}/api/network/edges/binds?source=${encodeURIComponent(reqSource)}&target=${encodeURIComponent(reqTarget)}`);
-
-      if (!response.ok) throw new Error("Failed to fetch binds");
-      const data = await response.json();
-      const binds = data.binds || [];
+      const lookupSource = sourceObj.rap_id || reqSource;
+      const lookupTarget = targetObj.rap_id || reqTarget;
+      const data = await window.RICE2NET_API.getBinds(lookupSource, lookupTarget);
+      const binds = (data && data.binds) || [];
 
       if (binds && binds.length > 0) {
 
@@ -482,12 +561,10 @@ async function showNodeDetails(node) {
   document.getElementById("tooltip").style.display = "none";
 
   try {
-    const apiBase = typeof API_BASE !== "undefined" ? API_BASE : "";
-    const response = await fetch(`${apiBase}/api/network/node/${encodeURIComponent(node.id)}`);
-    if (response.ok) {
-      const dbData = await response.json();
+    const dbData = await window.RICE2NET_API.getNodeMetadata(node.rap_id || node.id);
+    if (dbData) {
       if (!node.metadata) node.metadata = {};
-      node.metadata["RAP_ID"] = node.id;
+      node.metadata["RAP_ID"] = dbData.id || node.rap_id || node.id;
       if (dbData.msu_id) node.metadata["MSU_ID"] = dbData.msu_id;
       if (dbData.identifier) {
         node.identifier = dbData.identifier;
@@ -558,30 +635,42 @@ async function showNodeDetails(node) {
     }
   }
 
-  const neighbors = RAW_DATA.adjacency.get(node.id) || [];
+  const neighbors = RAW_DATA.adjacency.get(String(node.id)) || [];
   if (neighbors.length > 0) {
+    const nodeById = new Map();
+    for (let i = 0; i < nodes.length; i++) {
+      nodeById.set(String(nodes[i].id), nodes[i]);
+    }
+    const hasAnySign = neighbors.some((entry) => {
+      const edge = links[entry.idx];
+      return edge && edge.sign;
+    });
     html += `
       <details style="margin-top:10px; border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px;">
         <summary style="font-size:0.9rem; margin-bottom:5px; color:#bbb; cursor:pointer; outline:none;">CONNECTIONS (${node.deg || 0})</summary>
         <div style="max-height:150px; overflow-y:auto; border:1px solid #333; border-radius:4px; background:rgba(0,0,0,0.2);">
           <table style="width:100%; border-collapse:collapse; font-size:0.85rem; color:#eee;">
-            <thead><tr style="border-bottom:1px solid #555; background:rgba(255,255,255,0.05);"><th style="text-align:left; padding:4px;">Node</th><th style="text-align:right; padding:4px;">Wgt</th><th style="text-align:right; padding:4px;">IRP</th></tr></thead>
+            <thead><tr style="border-bottom:1px solid #555; background:rgba(255,255,255,0.05);"><th style="text-align:left; padding:4px;">Node</th><th style="text-align:right; padding:4px;">Wgt</th><th style="text-align:right; padding:4px;">IRP</th>${hasAnySign ? '<th style="text-align:center; padding:4px;">Sign</th>' : ''}</tr></thead>
             <tbody>`;
     neighbors.forEach((entry) => {
-      const neighbor = nodes.find((n) => n.id === entry.n);
+      const neighbor = nodeById.get(String(entry.n));
       if (!neighbor) return;
       const neighborBg = neighbor.hollow ? "transparent" : neighbor.fillColor || neighbor.color;
       let iconStyle2 = `display:inline-block; width:10px; height:10px; margin-right:6px; background-color:${neighborBg}; border:1px ${neighbor.dashed ? "dashed" : "solid"} ${neighbor.strokeColor || neighbor.color}; box-sizing:border-box;`;
       if (neighbor.shape === "diamond") iconStyle2 += ` transform: rotate(45deg); margin-left:2px; margin-right:8px;`;
       else iconStyle2 += ` border-radius:50%;`;
       const edge = links[entry.idx];
-      const weight = edge ? edge.weight || edge.value || edge.w || "1" : "1";
+      const weight = edge && edge.weight !== undefined && edge.weight !== null ? edge.weight : (edge ? edge.value || edge.w || "1" : "1");
       const irp = edge && edge.irp !== undefined && edge.irp !== null ? edge.irp : "-";
+      const signCell = hasAnySign
+        ? `<td style="padding:6px 4px; text-align:center; opacity:0.85;">${edge && edge.sign ? edge.sign : "-"}</td>`
+        : "";
       html += `
         <tr style="border-bottom:1px solid #333; cursor:pointer;" onclick="window.selectNode('${neighbor.id}')" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
           <td style="padding:6px 4px;"><div style="${iconStyle2}"></div><span style="font-family:monospace;">${neighbor.id}</span></td>
           <td style="padding:6px 4px; text-align:right; opacity:0.7;">${weight}</td>
           <td style="padding:6px 4px; text-align:right; opacity:0.7;">${irp}</td>
+          ${signCell}
         </tr>`;
     });
     html += `</tbody></table></div></details>`;
@@ -711,39 +800,35 @@ canvas.addEventListener('contextmenu', (e) => {
     const node = quadtree.find(wx, wy, 10 / transform.k + 5);
 
     if (node && node.color !== CONFIG.visuals.colors.Transparent && (!node.isRogue || VISIBILITY_STATE.Rogue || node.isTarget)) {
-
-        const uniqueNeighbors = new Map();
-        nodes.forEach(n => uniqueNeighbors.set(String(n.id), new Set()));
-        links.forEach(l => {
-            const s = String(l.source.id || l.source);
-            const t = String(l.target.id || l.target);
-            if (s !== t) {
-                if (uniqueNeighbors.has(s)) uniqueNeighbors.get(s).add(t);
-                if (uniqueNeighbors.has(t)) uniqueNeighbors.get(t).add(s);
-            }
-        });
-
         const myId = String(node.id);
-        const myNeighbors = uniqueNeighbors.get(myId) || new Set();
+        const curAdj = RAW_DATA && RAW_DATA.adjacency ? RAW_DATA.adjacency : null;
 
+        const getUniqueNeighbors = (adjMap, id) => {
+            const set = new Set();
+            const entries = adjMap ? adjMap.get(id) : null;
+            if (entries) {
+                for (let i = 0; i < entries.length; i++) {
+                    if (entries[i].n !== id) set.add(entries[i].n);
+                }
+            }
+            return set;
+        };
+
+        const myNeighbors = getUniqueNeighbors(curAdj, myId);
         const isLeaf = myNeighbors.size <= 1;
 
         let hasRemovableLeaves = false;
-        myNeighbors.forEach(neighborId => {
-            if (uniqueNeighbors.get(neighborId)?.size === 1) {
+        myNeighbors.forEach((neighborId) => {
+            if (!hasRemovableLeaves && getUniqueNeighbors(curAdj, neighborId).size === 1) {
                 hasRemovableLeaves = true;
             }
         });
 
-        const fullNeighbors = new Set();
-        if (RAW_DATA && RAW_DATA.links) {
-            RAW_DATA.links.forEach(l => {
-                const s = String(l.source.id || l.source);
-                const t = String(l.target.id || l.target);
-                if (s === myId && t !== myId) fullNeighbors.add(t);
-                if (t === myId && s !== myId) fullNeighbors.add(s);
-            });
-        }
+        const fullAdj =
+            window.__APP_CORE__ && typeof window.__APP_CORE__.getFullAdjacency === "function"
+                ? window.__APP_CORE__.getFullAdjacency()
+                : curAdj;
+        const fullNeighbors = getUniqueNeighbors(fullAdj, myId);
 
         const canExpand = fullNeighbors.size > myNeighbors.size;
 

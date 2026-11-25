@@ -11,19 +11,18 @@ window.__APP_CORE__ = window.__APP_CORE__ || {};
  * Calculates connected degrees for all active nodes.
  */
 function calculateDegrees() {
-  nodes.forEach((n) => (n.deg = 0));
-  links.forEach((l) => {
-    const s =
-      typeof l.source === "object"
-        ? l.source
-        : nodes.find((n) => n.id === l.source);
-    const t =
-      typeof l.target === "object"
-        ? l.target
-        : nodes.find((n) => n.id === l.target);
+  const nodeById = new Map();
+  for (let i = 0; i < nodes.length; i++) {
+    nodes[i].deg = 0;
+    nodeById.set(String(nodes[i].id), nodes[i]);
+  }
+  for (let i = 0; i < links.length; i++) {
+    const l = links[i];
+    const s = typeof l.source === "object" ? l.source : nodeById.get(String(l.source));
+    const t = typeof l.target === "object" ? l.target : nodeById.get(String(l.target));
     if (s) s.deg++;
     if (t) t.deg++;
-  });
+  }
 }
 
 /**
@@ -215,134 +214,200 @@ window.draw = function () {
   ctx.translate(transform.x, transform.y);
   ctx.scale(transform.k, transform.k);
 
+  // Visible world-space bounds for viewport culling
+  const invK = 1 / transform.k;
+  const viewPad = 24 * invK;
+  const minX = -transform.x * invK - viewPad;
+  const maxX = (w - transform.x) * invK + viewPad;
+  const minY = -transform.y * invK - viewPad;
+  const maxY = (h - transform.y) * invK + viewPad;
+
   const isHeavy = window.isHeavyGraph();
   const simplify = CURRENT_MODE === "pan" && isHeavy && isInteracting;
+  const transparentColor = CONFIG.visuals.colors.Transparent;
+  const showRogue = !!VISIBILITY_STATE.Rogue;
 
   if (!simplify) {
     const edgeW = parseFloat(document.getElementById("viz-edge-width").value);
     const edgeA = parseFloat(document.getElementById("viz-edge-alpha").value);
     const finalAlpha = THEME === "light" ? Math.min(1.0, edgeA * 2.0) : edgeA;
-    const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
+    const isRegActive = window.isRegulationActive
+      ? window.isRegulationActive()
+      : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
+    const hasCustomVisibility = typeof window.isEdgeVisible === "function";
+    const hoveredEdge = typeof HOVERED_EDGE !== "undefined" ? HOVERED_EDGE : null;
 
-    ctx.lineWidth = Math.max(edgeW / transform.k, edgeW);
+    ctx.lineWidth = Math.max(edgeW * invK, edgeW);
 
-    links.forEach((l) => {
-      if (typeof HOVERED_EDGE !== "undefined" && l === HOVERED_EDGE) return;
+    // 1. Batched pass for normal undirected edges (chunked to keep Canvas path buffers fast)
+    const normalAlpha = isRegActive ? finalAlpha * 0.4 : finalAlpha;
+    const EDGE_BATCH_SIZE = 15000;
+    const regEdges = isRegActive ? [] : null;
+
+    ctx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, ${normalAlpha})`;
+    ctx.beginPath();
+    let batchCount = 0;
+
+    for (let i = 0; i < links.length; i++) {
+      const l = links[i];
+      if (l === hoveredEdge) continue;
+
+      const s = l.source;
+      const t = l.target;
       if (
-        l.source &&
-        l.source.x !== undefined &&
-        l.source.color !== CONFIG.visuals.colors.Transparent &&
-        l.target.color !== CONFIG.visuals.colors.Transparent
+        !s ||
+        !t ||
+        s.x == null ||
+        s.y == null ||
+        t.x == null ||
+        t.y == null
       ) {
-        if ((l.source.isRogue || l.target.isRogue) && !VISIBILITY_STATE.Rogue)
-          return;
+        continue;
+      }
 
-        const isVisible = window.isEdgeVisible ? window.isEdgeVisible(l) : true;
-        if (!isVisible) return;
+      if (s.color === transparentColor || t.color === transparentColor) continue;
+      if ((s.isRogue || t.isRogue) && !showRogue) continue;
 
-        const hasInt = l.has_interacts !== false;
-        const hasReg = !!(l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0);
-        const isThisRegActive = isRegActive && hasReg;
+      // Viewport culling: skip edges whose bounding box is completely off-screen
+      const sx = s.x;
+      const sy = s.y;
+      const tx = t.x;
+      const ty = t.y;
+      if (
+        (sx < minX && tx < minX) ||
+        (sx > maxX && tx > maxX) ||
+        (sy < minY && ty < minY) ||
+        (sy > maxY && ty > maxY)
+      ) {
+        continue;
+      }
 
-        if (isThisRegActive) {
-           const isBidirectional = l.directions.length > 1;
-           const offsetDist = 6 / transform.k;
-           const isDashed = !hasInt;
+      if (hasCustomVisibility && !window.isEdgeVisible(l)) continue;
 
-           ctx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
+      const hasReg = !!(
+        isRegActive &&
+        l.has_regulates &&
+        Array.isArray(l.directions) &&
+        l.directions.length > 0
+      );
 
-           l.directions.forEach(dir => {
-              let srcNode, tgtNode;
-              if (String(l.source.id) === dir.src && String(l.target.id) === dir.tgt) {
-                srcNode = l.source;
-                tgtNode = l.target;
-              } else if (String(l.target.id) === dir.src && String(l.source.id) === dir.tgt) {
-                srcNode = l.target;
-                tgtNode = l.source;
-              } else return;
-
-              let sx = srcNode.x, sy = srcNode.y;
-              let tx = tgtNode.x, ty = tgtNode.y;
-
-              if (isBidirectional) {
-                 const dx = tx - sx;
-                 const dy = ty - sy;
-                 const len = Math.sqrt(dx * dx + dy * dy);
-                 if (len > 0) {
-                   const nx = (-dy / len) * offsetDist;
-                   const ny = (dx / len) * offsetDist;
-                   sx += nx; sy += ny;
-                   tx += nx; ty += ny;
-                 }
-              }
-              window.drawArrow(ctx, sx, sy, tx, ty, tgtNode.r || 5, isDashed, 1.0);
-           });
-
-        } else {
-          const currentAlpha = isRegActive ? finalAlpha * 0.4 : finalAlpha;
-          ctx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, ${currentAlpha})`;
-          ctx.beginPath();
-          ctx.moveTo(l.source.x, l.source.y);
-          ctx.lineTo(l.target.x, l.target.y);
+      if (hasReg) {
+        regEdges.push(l);
+      } else {
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(tx, ty);
+        batchCount++;
+        if (batchCount >= EDGE_BATCH_SIZE) {
           ctx.stroke();
+          ctx.beginPath();
+          batchCount = 0;
         }
       }
-    });
+    }
 
-    if (typeof HOVERED_EDGE !== "undefined" && HOVERED_EDGE) {
+    if (batchCount > 0) {
+      ctx.stroke();
+    }
+
+    // 2. Render visible regulatory arrows on top of normal edges
+    if (regEdges && regEdges.length > 0) {
+      const offsetDist = 6 * invK;
+      ctx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
+
+      for (let i = 0; i < regEdges.length; i++) {
+        const l = regEdges[i];
+        const hasInt = l.has_interacts !== false;
+        const isBidirectional = l.directions.length > 1;
+        const isDashed = !hasInt;
+        const sId = String(l.source.id);
+        const tId = String(l.target.id);
+
+        for (let d = 0; d < l.directions.length; d++) {
+          const dir = l.directions[d];
+          let srcNode, tgtNode;
+          if (sId === dir.src && tId === dir.tgt) {
+            srcNode = l.source;
+            tgtNode = l.target;
+          } else if (tId === dir.src && sId === dir.tgt) {
+            srcNode = l.target;
+            tgtNode = l.source;
+          } else {
+            continue;
+          }
+
+          let sx = srcNode.x, sy = srcNode.y;
+          let tx = tgtNode.x, ty = tgtNode.y;
+
+          if (isBidirectional) {
+            const dx = tx - sx;
+            const dy = ty - sy;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len > 0) {
+              const nx = (-dy / len) * offsetDist;
+              const ny = (dx / len) * offsetDist;
+              sx += nx; sy += ny;
+              tx += nx; ty += ny;
+            }
+          }
+          window.drawArrow(ctx, sx, sy, tx, ty, tgtNode.r || 5, isDashed, 1.0);
+        }
+      }
+    }
+
+    if (hoveredEdge) {
       ctx.save();
       const edgeStroke = THEME === "dark" ? "#ffffff" : "#000000";
       ctx.strokeStyle = edgeStroke;
       ctx.fillStyle = edgeStroke;
-      ctx.lineWidth = Math.max((edgeW * 3) / transform.k, edgeW * 3);
+      ctx.lineWidth = Math.max((edgeW * 3) * invK, edgeW * 3);
       ctx.globalAlpha = 1.0;
 
-      const l = HOVERED_EDGE;
+      const l = hoveredEdge;
       const hasInt = l.has_interacts !== false;
       const hasReg = !!(l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0);
       const isThisRegActive = isRegActive && hasReg;
 
       if (isThisRegActive) {
-         const isBidirectional = l.directions.length > 1;
-         const offsetDist = 6 / transform.k;
+        const isBidirectional = l.directions.length > 1;
+        const offsetDist = 6 * invK;
 
-         l.directions.forEach(dir => {
-              let srcNode, tgtNode;
-              if (String(l.source.id) === dir.src && String(l.target.id) === dir.tgt) {
-                srcNode = l.source; tgtNode = l.target;
-              } else if (String(l.target.id) === dir.src && String(l.source.id) === dir.tgt) {
-                srcNode = l.target; tgtNode = l.source;
-              } else return;
+        l.directions.forEach((dir) => {
+          let srcNode, tgtNode;
+          if (String(l.source.id) === dir.src && String(l.target.id) === dir.tgt) {
+            srcNode = l.source; tgtNode = l.target;
+          } else if (String(l.target.id) === dir.src && String(l.source.id) === dir.tgt) {
+            srcNode = l.target; tgtNode = l.source;
+          } else return;
 
-              let sx = srcNode.x, sy = srcNode.y;
-              let tx = tgtNode.x, ty = tgtNode.y;
+          let sx = srcNode.x, sy = srcNode.y;
+          let tx = tgtNode.x, ty = tgtNode.y;
 
-              if (isBidirectional) {
-                 const dx = tx - sx;
-                 const dy = ty - sy;
-                 const len = Math.sqrt(dx * dx + dy * dy);
-                 if (len > 0) {
-                   const nx = (-dy / len) * offsetDist;
-                   const ny = (dx / len) * offsetDist;
-                   sx += nx; sy += ny;
-                   tx += nx; ty += ny;
-                 }
-              }
+          if (isBidirectional) {
+            const dx = tx - sx;
+            const dy = ty - sy;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len > 0) {
+              const nx = (-dy / len) * offsetDist;
+              const ny = (dx / len) * offsetDist;
+              sx += nx; sy += ny;
+              tx += nx; ty += ny;
+            }
+          }
 
-              const isHoveredDir = (l.clicked_src === dir.src && l.clicked_tgt === dir.tgt);
-              if (isHoveredDir) {
-                  ctx.strokeStyle = edgeStroke;
-                  ctx.fillStyle = edgeStroke;
-                  ctx.lineWidth = Math.max((edgeW * 3) / transform.k, edgeW * 3);
-              } else {
-                  ctx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
-                  ctx.fillStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
-                  ctx.lineWidth = Math.max(edgeW / transform.k, edgeW);
-              }
+          const isHoveredDir = (l.clicked_src === dir.src && l.clicked_tgt === dir.tgt);
+          if (isHoveredDir) {
+            ctx.strokeStyle = edgeStroke;
+            ctx.fillStyle = edgeStroke;
+            ctx.lineWidth = Math.max((edgeW * 3) * invK, edgeW * 3);
+          } else {
+            ctx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
+            ctx.fillStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
+            ctx.lineWidth = Math.max(edgeW * invK, edgeW);
+          }
 
-              window.drawArrow(ctx, sx, sy, tx, ty, tgtNode.r || 5, !hasInt, 1.0);
-         });
-      } else {
+          window.drawArrow(ctx, sx, sy, tx, ty, tgtNode.r || 5, !hasInt, 1.0);
+        });
+      } else if (l.source && l.target && l.source.x != null && l.target.x != null) {
         ctx.beginPath();
         ctx.moveTo(l.source.x, l.source.y);
         ctx.lineTo(l.target.x, l.target.y);
@@ -353,67 +418,145 @@ window.draw = function () {
     }
   }
 
+  const rogueOpacity = CONFIG.visuals.rogueOpacity;
+  const minTargetR = 4 * invK;
+  const dashPattern = [4 * invK, 3 * invK];
+  const TWO_PI = Math.PI * 2;
+
   const drawNodePass = (isTargetPass) => {
     if (simplify) {
-      for (const n of nodes) {
+      const buckets = new Map();
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
         if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
         if (!!n.isTarget !== isTargetPass) continue;
-        if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
-        if (n.color === CONFIG.visuals.colors.Transparent) continue;
+        if (n.isRogue && !showRogue && !n.isTarget) continue;
+        if (n.color === transparentColor) continue;
+        if (n.x == null || n.y == null) continue;
 
-        ctx.globalAlpha = n.isRogue && !n.isTarget ? CONFIG.visuals.rogueOpacity : 1.0;
-        ctx.fillStyle = n.color;
-        const r = n.isTarget ? Math.max(n.r, 4 / transform.k) : n.r;
-        ctx.fillRect(n.x - r, n.y - r, r * 2, r * 2);
+        const r = n.isTarget ? Math.max(n.r, minTargetR) : n.r;
+        if (n.x + r < minX || n.x - r > maxX || n.y + r < minY || n.y - r > maxY) continue;
+
+        const alpha = n.isRogue && !n.isTarget ? rogueOpacity : 1.0;
+        const key = `${n.color}|${alpha}`;
+        let list = buckets.get(key);
+        if (!list) {
+          list = { color: n.color, alpha, items: [] };
+          buckets.set(key, list);
+        }
+        list.items.push(n, r);
+      }
+
+      buckets.forEach((b) => {
+        ctx.globalAlpha = b.alpha;
+        ctx.fillStyle = b.color;
+        const items = b.items;
+        for (let i = 0; i < items.length; i += 2) {
+          const n = items[i];
+          const r = items[i + 1];
+          ctx.fillRect(n.x - r, n.y - r, r * 2, r * 2);
+        }
+      });
+      ctx.globalAlpha = 1.0;
+      return;
+    }
+
+    // Group visible nodes by visual style so we batch fills & strokes without per-node save/restore
+    const buckets = new Map();
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
+      if (!!n.isTarget !== isTargetPass) continue;
+      if (n.isRogue && !showRogue && !n.isTarget) continue;
+      if (n.color === transparentColor) continue;
+      if (n.x == null || n.y == null) continue;
+
+      const baseR = n.isTarget ? Math.max(n.r, minTargetR) : n.r;
+      const isDiamond = n.shape === "diamond";
+      const cullR = isDiamond ? baseR * 1.25 : baseR;
+      if (
+        n.x + cullR < minX ||
+        n.x - cullR > maxX ||
+        n.y + cullR < minY ||
+        n.y - cullR > maxY
+      ) {
+        continue;
+      }
+
+      const isHollow = !!n.hollow;
+      const isDashed = n.isRogue ? true : !!n.dashed;
+      const fillColor = n.fillColor !== undefined ? n.fillColor : n.color;
+      const hasFill = !isHollow && !!fillColor && fillColor !== transparentColor;
+      const strokeColor = n.strokeColor || n.color || "#000";
+      const fillAlpha = hasFill && n.isRogue && !n.isTarget ? rogueOpacity : 1.0;
+
+      const key = `${isDiamond ? "d" : "c"}|${isHollow ? 1 : 0}|${isDashed ? 1 : 0}|${hasFill ? fillColor : ""}|${fillAlpha}|${strokeColor}`;
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = {
+          isDiamond,
+          isHollow,
+          isDashed,
+          hasFill,
+          fillColor,
+          fillAlpha,
+          strokeColor,
+          items: [],
+        };
+        buckets.set(key, bucket);
+      }
+      bucket.items.push(n.x, n.y, baseR);
+    }
+
+    let currentDashed = false;
+    ctx.setLineDash([]);
+
+    buckets.forEach((b) => {
+      if (b.isDashed !== currentDashed) {
+        ctx.setLineDash(b.isDashed ? dashPattern : []);
+        currentDashed = b.isDashed;
+      }
+
+      ctx.lineWidth = (b.isHollow ? 1.6 : 1) * invK;
+      ctx.beginPath();
+
+      const items = b.items;
+      if (b.isDiamond) {
+        for (let i = 0; i < items.length; i += 3) {
+          const x = items[i];
+          const y = items[i + 1];
+          const r = items[i + 2] * 1.2;
+          ctx.moveTo(x, y - r);
+          ctx.lineTo(x + r, y);
+          ctx.lineTo(x, y + r);
+          ctx.lineTo(x - r, y);
+          ctx.closePath();
+        }
+      } else {
+        for (let i = 0; i < items.length; i += 3) {
+          const x = items[i];
+          const y = items[i + 1];
+          const r = items[i + 2];
+          ctx.moveTo(x + r, y);
+          ctx.arc(x, y, r, 0, TWO_PI);
+        }
+      }
+
+      if (b.hasFill) {
+        ctx.globalAlpha = b.fillAlpha;
+        ctx.fillStyle = b.fillColor;
+        ctx.fill();
         ctx.globalAlpha = 1.0;
       }
-    } else {
-      for (const n of nodes) {
-        if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
-        if (!!n.isTarget !== isTargetPass) continue;
-        if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
-        if (n.color === CONFIG.visuals.colors.Transparent) continue;
 
-        ctx.save();
+      ctx.strokeStyle = b.strokeColor;
+      ctx.stroke();
+    });
 
-        const isHollow = !!n.hollow;
-        const isDashed = n.isRogue ? true : !!n.dashed;
-
-        const strokeW = (isHollow ? 1.6 : 1) / transform.k;
-        ctx.lineWidth = strokeW;
-        ctx.setLineDash(isDashed ? [4 / transform.k, 3 / transform.k] : []);
-
-        const baseR = n.isTarget ? Math.max(n.r, 4 / transform.k) : n.r;
-        ctx.beginPath();
-        if (n.shape === "diamond") {
-          const r = baseR * 1.2;
-          ctx.moveTo(n.x, n.y - r);
-          ctx.lineTo(n.x + r, n.y);
-          ctx.lineTo(n.x, n.y + r);
-          ctx.lineTo(n.x - r, n.y);
-          ctx.closePath();
-        } else {
-          ctx.arc(n.x, n.y, baseR, 0, 2 * Math.PI);
-        }
-
-        const fillColor = n.fillColor !== undefined ? n.fillColor : n.color;
-        if (
-          !isHollow &&
-          fillColor &&
-          fillColor !== CONFIG.visuals.colors.Transparent
-        ) {
-          ctx.globalAlpha = n.isRogue && !n.isTarget ? CONFIG.visuals.rogueOpacity : 1.0;
-          ctx.fillStyle = fillColor;
-          ctx.fill();
-          ctx.globalAlpha = 1.0;
-        }
-
-        ctx.strokeStyle = n.strokeColor || n.color || "#000";
-        ctx.stroke();
-        ctx.restore();
-      }
+    if (currentDashed) {
       ctx.setLineDash([]);
     }
+    ctx.globalAlpha = 1.0;
   };
 
   drawNodePass(false);
