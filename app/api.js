@@ -11,8 +11,31 @@
  */
 
 (function () {
+  function isDemoHostOrParam() {
+    try {
+      if (typeof window !== "undefined" && window.RICE2NET_MODE === "static") {
+        return true;
+      }
+      if (typeof window !== "undefined" && window.RICE2NET_MODE === "http") {
+        return false;
+      }
+      if (typeof location !== "undefined") {
+        const host = String(location.hostname || "").toLowerCase();
+        if (host.endsWith("github.io")) return true;
+        const params = new URLSearchParams(location.search || "");
+        const demoParam = String(params.get("demo") || "").toLowerCase();
+        if (demoParam === "1" || demoParam === "true") return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
   function getMode() {
-    return window.RICE2NET_MODE === "static" ? "static" : "http";
+    return isDemoHostOrParam() ? "static" : "http";
+  }
+
+  function isDemoMode() {
+    return getMode() === "static";
   }
 
   function getApiBase() {
@@ -50,6 +73,25 @@
     return String(val || "").trim().toLowerCase();
   }
 
+  function normalizeMsuKey(val) {
+    return normalizeLookupKey(val).replace(/^loc_/, "").replace(/\.\d+$/, "");
+  }
+
+  function normalizeRapKey(val) {
+    return normalizeLookupKey(val).replace(/^(os\d{2})t(\d{7})(-\d+)?$/, "$1g$2");
+  }
+
+  function lookupStaticMeta(map, id) {
+    if (!id) return null;
+    const k = normalizeLookupKey(id);
+    if (map.has(k)) return map.get(k);
+    const rk = normalizeRapKey(id);
+    if (rk !== k && map.has(rk)) return map.get(rk);
+    const mk = normalizeMsuKey(id);
+    if (mk && map.has(mk)) return map.get(mk);
+    return null;
+  }
+
   async function loadStaticMetadata() {
     if (staticCache.metadataLookup) return staticCache.metadataLookup;
 
@@ -70,6 +112,8 @@
             if (k && !map.has(k)) map.set(k, entry);
             const noIso = k.replace(/\.\d+$/, "");
             if (noIso && !map.has(noIso)) map.set(noIso, entry);
+            const stripped = normalizeMsuKey(part);
+            if (stripped && !map.has(stripped)) map.set(stripped, entry);
           });
       }
       if (entry.identifier && entry.identifier !== ".") {
@@ -201,7 +245,7 @@
     if (!id) return null;
     if (getMode() === "static") {
       const lookup = await loadStaticMetadata();
-      return lookup.get(normalizeLookupKey(id)) || null;
+      return lookupStaticMeta(lookup, id);
     }
 
     const res = await fetch(
@@ -228,7 +272,7 @@
       const lookup = await loadStaticMetadata();
       const nodesById = {};
       ids.forEach((id) => {
-        const entry = lookup.get(normalizeLookupKey(id));
+        const entry = lookupStaticMeta(lookup, id);
         if (entry) nodesById[String(id)] = entry;
       });
       return { nodesById };
@@ -382,7 +426,11 @@
   }
 
   window.RICE2NET_API = {
+    get isDemo() {
+      return isDemoMode();
+    },
     getMode,
+    isDemoMode,
     initNetwork,
     getClusters,
     getNodeMetadata,

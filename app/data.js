@@ -670,6 +670,7 @@ window.revertToEmbeddedNetworkCore = async function () {
   if (tooltipEl) tooltipEl.style.display = "none";
   const ctxMenu = document.getElementById("context-menu");
   if (ctxMenu) ctxMenu.style.display = "none";
+  if (typeof window.hideDemoImportNotice === "function") window.hideDemoImportNotice();
 
   if (typeof simulation !== "undefined" && simulation) simulation.stop();
 

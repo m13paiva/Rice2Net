@@ -112,6 +112,9 @@ window.importJSON = function (input) {
 
         if (loader) loader.style.display = "none";
         finishSetup(true);
+        if (typeof window.showDemoImportNotice === "function") {
+          window.showDemoImportNotice();
+        }
       } catch (err) {
         alert("Error importing JSON: " + err.message);
         loader.style.display = "none";
@@ -326,10 +329,84 @@ window.importEdges = function (input) {
       RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
       RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
       startCalculation(true);
+      if (typeof window.showDemoImportNotice === "function") {
+        window.showDemoImportNotice();
+      }
     };
     reader.readAsText(input.files[0]);
   }, 50);
 };
+
+/**
+ * Enables drag-and-drop custom file import (.json, .tsv, .csv, .txt) onto the app canvas.
+ */
+(function initDragAndDropImport() {
+  const target = document.getElementById("container") || document.body;
+  if (!target || typeof target.addEventListener !== "function") return;
+
+  let dragDepth = 0;
+  let overlay = null;
+
+  function ensureOverlay() {
+    if (overlay) return overlay;
+    overlay = document.createElement("div");
+    overlay.id = "drop-import-overlay";
+    overlay.innerHTML = `<div class="drop-import-card">Drop <code>.json</code> layout or <code>.tsv</code> / <code>.csv</code> / <code>.txt</code> edge table to import</div>`;
+    target.appendChild(overlay);
+    return overlay;
+  }
+
+  function hasFiles(e) {
+    return (
+      e.dataTransfer &&
+      e.dataTransfer.types &&
+      Array.from(e.dataTransfer.types).includes("Files")
+    );
+  }
+
+  target.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    ensureOverlay().style.display = "flex";
+  });
+
+  target.addEventListener("dragover", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+
+  target.addEventListener("dragleave", (e) => {
+    if (!hasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0 && overlay) overlay.style.display = "none";
+  });
+
+  target.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    if (overlay) overlay.style.display = "none";
+
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || !files.length) return;
+    const file = files[0];
+    const name = String(file.name || "").toLowerCase();
+
+    if (name.endsWith(".json")) {
+      window.importJSON({ files: [file] });
+    } else if (
+      name.endsWith(".tsv") ||
+      name.endsWith(".csv") ||
+      name.endsWith(".txt")
+    ) {
+      window.importEdges({ files: [file] });
+    } else {
+      alert("Unsupported file format. Drop a .json layout or .tsv/.csv/.txt edge file.");
+    }
+  });
+})();
 
 /**
  * Runs localized D3 force simulation for a subset of affected node IDs.

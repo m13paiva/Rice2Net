@@ -2,6 +2,12 @@
 
 <img src="figures/rice2net_logo_w_background.png" alt="Rice2Net Logo" width="100%"/>
 
+<p align="center">
+  <a href="https://m13paiva.github.io/Rice2Net/">
+    <img src="https://img.shields.io/badge/Try_Live_Web_Demo-Rice2Net_(GitHub_Pages)-2a5298?style=for-the-badge&logo=githubpages&logoColor=white" alt="Try Live Web Demo">
+  </a>
+</p>
+
 ## About Rice2Net
 
 Rice2Net is a webtool for the visualization, exploration, and analysis of the rice (*Oryza sativa*) gene regulatory network (GRN) and coexpression data. The tool interfaces with a Neo4j graph database to render topological data into a force-directed graph. Users filter subnetworks, manipulate node visibility, adjust layout parameters, and cross-reference genes with functional annotations.
