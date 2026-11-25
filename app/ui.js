@@ -96,6 +96,60 @@ window.updateTargetCounts = function () {
   updateTargetStats(found, rawTargets.length);
 };
 
+/**
+ * Initializes the non-intrusive Web Demo Mode badge and custom import notice helpers.
+ */
+function initDemoModeUI() {
+  if (!window.RICE2NET_API || !window.RICE2NET_API.isDemoMode || !window.RICE2NET_API.isDemoMode()) {
+    return;
+  }
+
+  if (!document.getElementById("demo-badge")) {
+    const container = document.getElementById("container") || document.body;
+    const badge = document.createElement("div");
+    badge.id = "demo-badge";
+    badge.innerHTML = `
+      <span class="demo-badge-dot"></span>
+      <span class="demo-badge-text">Web Demo (Curated Subnetwork)</span>
+      <span class="demo-badge-sep"></span>
+      <a class="demo-badge-link" href="https://github.com/m13paiva/Rice2Net/releases" target="_blank" rel="noopener noreferrer"
+         title="Full 46,036-gene genome annotations &amp; offline causality analysis available in the Desktop App">
+        Get Desktop App &nearr;
+      </a>
+    `;
+    container.appendChild(badge);
+  }
+}
+
+window.showDemoImportNotice = function () {
+  if (!window.RICE2NET_API || !window.RICE2NET_API.isDemoMode || !window.RICE2NET_API.isDemoMode()) {
+    return;
+  }
+  const container = document.getElementById("container") || document.body;
+  let toast = document.getElementById("demo-import-notice");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "demo-import-notice";
+    toast.innerHTML = `
+      <span>
+        <strong>Web Demo Import:</strong> Gene annotation lookup and motif causality are limited to the curated demo genes.
+        <a href="https://github.com/m13paiva/Rice2Net/releases" target="_blank" rel="noopener noreferrer">Get the Desktop App</a>
+        for full 46,036-gene annotations &amp; genome-wide offline causality.
+      </span>
+      <button type="button" class="demo-notice-close" onclick="window.hideDemoImportNotice()" title="Dismiss">&times;</button>
+    `;
+    container.appendChild(toast);
+  }
+  toast.style.display = "flex";
+};
+
+window.hideDemoImportNotice = function () {
+  const toast = document.getElementById("demo-import-notice");
+  if (toast) toast.style.display = "none";
+};
+
+initDemoModeUI();
+
 if (typeof window.__APP_CORE__.main === 'function') {
   window.__APP_CORE__.main();
 }
