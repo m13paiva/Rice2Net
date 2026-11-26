@@ -49,6 +49,20 @@
             </details>
 
             <details>
+                <summary>Analyze</summary>
+                <p>The <strong>Analyze</strong> panel executes in-app analyses strictly on the currently visible nodes and edges displayed on the canvas.</p>
+                <ul>
+                    <li><strong>Community Discovery:</strong> Partitions the visible graph using two-level undirected <strong>Infomap</strong> (WebAssembly) and evaluates <strong>ORA (Over-Representation Analysis)</strong> via exact upper-tail Hypergeometric tests with per-source Benjamini–Hochberg FDR across <strong>GO:BP</strong>, <strong>GO:MF</strong>, <strong>GO:CC</strong> (with true-path GO DAG propagation), <strong>MapMan</strong>, and <strong>KEGG</strong>.
+                        <ul>
+                            <li><strong>Parameters:</strong> Configure <strong>Markov Time</strong> (default <code>1</code>), <strong>Background Gene Set</strong> (<em>All genes in visible network</em>, <em>No background</em>, or <em>Custom list</em> via text/file input), <strong>Background Gene Scope</strong> (<em>Only annotated</em> or <em>All genes</em>), and <strong>Adjusted p-value Threshold</strong> (default <code>0.05</code>).</li>
+                            <li><strong>Interactive Clusters &amp; ORA Report:</strong> Only clusters with significant ORA terms are displayed. Users can rename, recolor, toggle, or delete clusters and inspect full ORA results with source filters, multi-parameter sorting, horizontal <strong>Fold</strong> bar plots, clickable gene overlaps, and TSV exports.</li>
+                        </ul>
+                    </li>
+                    <li><strong>Promoter-Binding Motifs:</strong> Queries TF–promoter regulatory edges across the visible graph filtered by selectable motif sources (<strong>PlantTFDB</strong>, <strong>JASPAR Core</strong>, <strong>JASPAR Unvalidated</strong>, and <strong>CIS-BP</strong>). Running a search replaces prior regulation results and adds <strong>Regulation</strong> to the Edge Legend (initially visible) for instant show/hide toggling without re-querying the database.</li>
+                </ul>
+            </details>
+
+            <details>
                 <summary>Layout</summary>
                 <p>The <strong>Layout</strong> panel provides control over the rendering and the D3.js force simulation engine.</p>
                 <ul>
@@ -63,10 +77,10 @@
                 <p>The <strong>Export</strong> suite allows users to extract visualizations and tabular data.</p>
                 <ul>
                     <li><strong>Locus ID Format:</strong> A toggle that defines whether exported data files prioritize RAP-DB or MSU formatting for gene identifiers.</li>
-                    <li><strong>Export Image (.png):</strong> Generates a snapshot of the canvas. A "Show all edges" toggle forces the renderer to paint edges connected to transparent (hidden) nodes.</li>
-                    <li><strong>Export Edges (.tsv):</strong> Downloads visible topological links, including source/target mapping, edge weights, IRP scores, directionality flags, and interaction signs (<code>+</code>/<code>-</code>).</li>
-                    <li><strong>Export Layout (.json):</strong> Saves spatial coordinates (<code>x</code>, <code>y</code>), visibility states, and metadata of the canvas, allowing the user to import and restore the visualization.</li>
-                    <li><strong>Export Genes (.tsv):</strong> Downloads a tabular list of visible genes along with flattened metadata columns (Symbol, Transcription Factor families, mapped pathways).</li>
+                    <li><strong>Export Image (.png):</strong> Generates a high-resolution snapshot of the canvas and active node/cluster legends. A "Show all edges" toggle forces the renderer to paint edges connected to transparent (hidden) nodes.</li>
+                    <li><strong>Export Edges (.tsv):</strong> Downloads visible topological links, including source/target mapping, edge weights, IRP scores, directionality flags, interaction signs (<code>+</code>/<code>-</code>), and active cluster metadata (names, colors, p-value threshold, and <code>Source_Cluster</code> / <code>Target_Cluster</code> columns).</li>
+                    <li><strong>Export Layout (.json):</strong> Saves spatial coordinates (<code>x</code>, <code>y</code>), node/edge metadata, and active cluster definitions (genes, names, colors, and ORA threshold), allowing the user to import and restore the visualization.</li>
+                    <li><strong>Export Genes (.tsv):</strong> Downloads a tabular list of visible genes along with flattened metadata columns (Cluster ID/Name/Color/Threshold, Symbol, Transcription Factor families, GO terms, KEGG pathways, MapMan bins, and UniProt entries).</li>
                 </ul>
             </details>
 
@@ -74,9 +88,9 @@
                 <summary>Import</summary>
                 <p>The <strong>Import</strong> section allows users to load networks or restore saved application states, overriding the Neo4j database connection.</p>
                 <ul>
-                    <li><strong>Load Layout JSON:</strong> Restores a network exported via the "Export Layout (.json)" function. This restores spatial positioning without recalculating the physics engine.</li>
-                    <li><strong>Load Edges TSV:</strong> Accepts a <code>.tsv</code>, <code>.csv</code>, or <code>.txt</code> file containing Source and Target columns (with Weights). The application builds the topology, queries the database for metadata, and calculates a physics layout.</li>
-                    <li><strong>Revert to Database:</strong> An active import displays its filename in the panel alongside an "✕" button. Clicking this button clears the imported data and restores the network from the database.</li>
+                    <li><strong>Load Layout JSON:</strong> Restores a network exported via the "Export Layout (.json)" function without recalculating the physics engine. When cluster metadata is included, saved clusters are restored and automatically re-analyzed with <strong>ORA</strong> under their saved adjusted p-value threshold.</li>
+                    <li><strong>Load Edges TSV:</strong> Accepts a <code>.tsv</code>, <code>.csv</code>, or <code>.txt</code> file containing Source and Target columns (with optional Weights, IRP scores, Signs, and cluster metadata/columns). The application builds the topology, queries the database for metadata, calculates a physics layout, and restores clusters with automatic <strong>ORA</strong> re-analysis when present.</li>
+                    <li><strong>Revert to Database:</strong> An active import displays its filename in the panel alongside an "✕" button. Clicking this button clears the imported data, resets in-memory clusters and regulation edges, and restores the reference network and global clusters from the database.</li>
                 </ul>
             </details>
 
@@ -86,7 +100,7 @@
                 <p>Rice2Net aggregates annotations and sequence identifiers from databases to provide context for each node. The following annotation sources are integrated into the database:</p>
                 <ul>
                     <li><strong>Gene Identifiers:</strong> Primary cross-referencing utilizes <strong>RAP-DB</strong> (Rice Annotation Project) and <strong>MSU</strong> (Michigan State University) locus IDs, alongside gene symbols and GenBank identifiers.</li>
-                    <li><strong>Gene Ontology (GO):</strong> Functional classification terms (Biological Process, Molecular Function, Cellular Component) mapped to EBI QuickGO URLs.</li>
+                    <li><strong>Gene Ontology (GO):</strong> Functional classification terms (Biological Process, Molecular Function, Cellular Component) mapped to EBI QuickGO URLs, with GO DAG parent-child edges (<code>IS_A</code> and <code>PART_OF</code>) stored directly in Neo4j for true-path ORA propagation.</li>
                     <li><strong>MapMan:</strong> Ontology bin codes detailing metabolic pathways and cellular processes.</li>
                     <li><strong>KEGG:</strong> (Kyoto Encyclopedia of Genes and Genomes) Mapped pathway codes and network descriptions.</li>
                     <li><strong>UniProt:</strong> Cross-referenced protein database entries containing reviewed status, protein names, and alias mapping.</li>
@@ -146,20 +160,37 @@
 
             <details>
                 <summary>Functional Clusters</summary>
-                <div class="info-note">
-                    <strong>Note:</strong> The <strong>Functionally Enriched Clusters</strong> features have been removed in the current version of Rice2Net and its database, though the underlying frontend architecture is preserved with the intention of reimplementing them in a future release.
-                </div>
-                <p>Community detection within networks was originally performed using Python <strong>Infomap</strong>, with modules functionally annotated using <strong>g:GOSt</strong> (<strong>g:Profiler</strong>).</p>
+                <p>Community detection and Over-Representation Analysis (ORA) are integrated directly into Rice2Net using WebAssembly <strong>Infomap</strong> and exact upper-tail Hypergeometric tests with per-source Benjamini–Hochberg FDR across <strong>GO:BP</strong>, <strong>GO:MF</strong>, <strong>GO:CC</strong> (with GO DAG propagation), <strong>MapMan</strong>, and <strong>KEGG</strong>.</p>
+                <p>For instant startup on the global coexpression network, 8 curated functional clusters (<code>Markov Time = 1.5</code>, visible-network annotated background, <code>FDR &le; 0.05</code>, spanning 21,075 genes and 1,776 precomputed <code>ENRICHED_IN</code> ORA links) are stored in Neo4j:</p>
+                <table class="info-table">
+                    <thead>
+                        <tr>
+                            <th>Cluster</th>
+                            <th class="num">Assigned Genes</th>
+                            <th class="num">Significant ORA Terms</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>C1 - Translation</strong></td><td class="num">4,575</td><td class="num">392</td></tr>
+                        <tr><td><strong>C2 - External stimulus response</strong></td><td class="num">4,208</td><td class="num">300</td></tr>
+                        <tr><td><strong>C3 - Photosynthesis</strong></td><td class="num">3,734</td><td class="num">314</td></tr>
+                        <tr><td><strong>C4 - Cell wall organisation</strong></td><td class="num">3,558</td><td class="num">353</td></tr>
+                        <tr><td><strong>C5 - Stress response &amp; defense</strong></td><td class="num">2,833</td><td class="num">42</td></tr>
+                        <tr><td><strong>C6 - Transcriptional regulation</strong></td><td class="num">1,367</td><td class="num">242</td></tr>
+                        <tr><td><strong>C7 - Protein folding</strong></td><td class="num">576</td><td class="num">93</td></tr>
+                        <tr><td><strong>C8 - Photosystem II</strong></td><td class="num">224</td><td class="num">40</td></tr>
+                    </tbody>
+                </table>
             </details>
 
             <details>
                 <summary>Database Statistics</summary>
-                <p>The data is stored in a Neo4j graph database centered on <code>Gene</code> nodes connected to annotation metadata nodes and self-referential coexpression and regulatory edges.</p>
+                <p>The data is stored in a Neo4j graph database centered on <code>Gene</code> nodes connected to annotation metadata, ontology hierarchies (<code>MapMan</code> <code>SUBCATEGORY_OF</code>; <code>GOTerm</code> <code>IS_A</code> and <code>PART_OF</code>), precomputed global <code>Cluster</code> nodes, and self-referential coexpression and regulatory edges.</p>
                 <p style="text-align: center;">
-                  <img src="figures/db_structure.png" alt="Node and edge structure of the Neo4j Database." style="width: 85%;">
+                  <img src="figures/db_structure.svg" alt="Node and edge structure of the Neo4j Database." style="width: 42.5%;">
                 </p>
 
-                <p><strong>Node Statistics</strong> <em>(162,736 total nodes; 21,167 <code>Gene</code> nodes connected in the global coexpression network)</em></p>
+                <p><strong>Node Statistics</strong> <em>(164,770 total nodes; 21,167 <code>Gene</code> nodes connected in the global coexpression network)</em></p>
                 <table class="info-table">
                     <thead>
                         <tr>
@@ -171,14 +202,15 @@
                         <tr><td><code>Uniprot</code></td><td class="num">102,601</td></tr>
                         <tr><td><code>Gene</code></td><td class="num">46,036</td></tr>
                         <tr><td><code>MapMan</code></td><td class="num">8,751</td></tr>
-                        <tr><td><code>GOTerm</code></td><td class="num">4,588</td></tr>
+                        <tr><td><code>GOTerm</code></td><td class="num">6,614</td></tr>
                         <tr><td><code>Motif</code></td><td class="num">501</td></tr>
                         <tr><td><code>Pathway</code></td><td class="num">160</td></tr>
                         <tr><td><code>TFFamily</code></td><td class="num">99</td></tr>
+                        <tr><td><code>Cluster</code></td><td class="num">8</td></tr>
                     </tbody>
                 </table>
 
-                <p><strong>Topology and Edge Statistics</strong> <em>(23,211,967 total relationships)</em></p>
+                <p><strong>Topology and Edge Statistics</strong> <em>(23,245,227 total relationships)</em></p>
                 <table class="info-table">
                     <thead>
                         <tr>
@@ -194,17 +226,17 @@
                         <tr><td><code>Gene</code></td><td><code>INTERACTS_WITH</code></td><td><code>Gene</code></td><td class="num">824,461 <em>(788,173 <code>+</code>, 36,288 <code>-</code>)</em></td></tr>
                         <tr><td><code>Gene</code></td><td><code>HAS_GO_TERM</code></td><td><code>GOTerm</code></td><td class="num">57,794</td></tr>
                         <tr><td><code>Gene</code></td><td><code>HAS_UNIPROT</code></td><td><code>Uniprot</code></td><td class="num">49,005</td></tr>
+                        <tr><td><code>Gene</code></td><td><code>BELONGS_TO_CLUSTER</code></td><td><code>Cluster</code></td><td class="num">21,075</td></tr>
                         <tr><td><code>Gene</code></td><td><code>HAS_MAPMAN</code></td><td><code>MapMan</code></td><td class="num">16,237</td></tr>
                         <tr><td><code>Gene</code></td><td><code>IN_PATHWAY</code></td><td><code>Pathway</code></td><td class="num">11,261</td></tr>
+                        <tr><td><code>GOTerm</code></td><td><code>IS_A</code></td><td><code>GOTerm</code></td><td class="num">9,586</td></tr>
                         <tr><td><code>MapMan</code></td><td><code>SUBCATEGORY_OF</code></td><td><code>MapMan</code></td><td class="num">8,719</td></tr>
                         <tr><td><code>Gene</code></td><td><code>BELONGS_TO_FAMILY</code></td><td><code>TFFamily</code></td><td class="num">2,425</td></tr>
+                        <tr><td><code>Cluster</code></td><td><code>ENRICHED_IN</code></td><td><code>GOTerm</code> / <code>MapMan</code> / <code>Pathway</code></td><td class="num">1,776</td></tr>
                         <tr><td><code>Gene</code></td><td><code>HAS_MOTIF</code></td><td><code>Motif</code></td><td class="num">984</td></tr>
+                        <tr><td><code>GOTerm</code></td><td><code>PART_OF</code></td><td><code>GOTerm</code></td><td class="num">823</td></tr>
                     </tbody>
                 </table>
-
-                <div class="info-note">
-                    <strong>Note:</strong> <code>Cluster</code> nodes and <code>BELONGS_TO_CLUSTER</code> relationships (Functionally Enriched Clusters) were removed in the current version, with the intention of reimplementing this feature in a future release.
-                </div>
             </details>
 
             <h2>Team</h2>

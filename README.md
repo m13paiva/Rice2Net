@@ -31,6 +31,21 @@ The **Target Explorer** allows users to isolate subnetworks based on a list of g
 
 </details>
 
+<details><summary><b>Analyze</b></summary>
+
+The **Analyze** panel runs on-the-fly network analyses strictly on the currently visible nodes and edges displayed on the canvas.
+
+* **Community Discovery:** Partitions the visible graph into densely interconnected modules using two-level undirected **Infomap** (`@mapequation/infomap` WebAssembly) and evaluates **ORA (Over-Representation Analysis)** via exact upper-tail Hypergeometric tests with per-source Benjamini–Hochberg FDR across **GO:BP**, **GO:MF**, **GO:CC** (using true-path `IS_A`/`PART_OF` DAG propagation), **MapMan**, and **KEGG**.
+  * **Markov Time:** Controls module resolution in Infomap (default `1`).
+  * **Background Gene Set & Scope:** Choose between *All genes in visible network* (default), *No background* (full genome), or a *Custom list* (pasted or uploaded as `.txt`/`.tsv`/`.csv`), and restrict the statistical universe to *Only annotated* genes or *All genes*.
+  * **Adjusted p-value Threshold:** Controls the BH-FDR cutoff (default `0.05`). Only modules with at least one significant ORA term are displayed.
+  * **Interactive Cluster Management & ORA Report:** Rename, recolor, toggle visibility, or delete individual clusters directly from the legend or the **ORA Report** modal. The ORA Report provides source filter chips, multi-parameter sorting (*Order by → Then → Then* and clickable headers), horizontal **Fold** bar plots (0-to-max axis on a light-green to dark-red color scale), clickable overlap gene lists, and TSV export for ORA tables and cluster gene lists.
+* **Promoter-Binding Motifs:** Searches TF–promoter regulatory relationships across currently visible edges using selectable motif sources (**PlantTFDB**, **JASPAR Core**, **JASPAR Unvalidated**, and **CIS-BP**).
+  * Running the search replaces any previous regulation results, displays the matched directional edges, and adds **Regulation** to the Edge Legend in the visible state.
+  * Toggling **Regulation** in the Edge Legend shows or hides the current results without re-querying the database, and clicking a regulatory edge displays motif binding events filtered to the selected sources.
+
+</details>
+
 <details><summary><b>Layout</b></summary>
 
 The **Layout** panel provides control over the rendering and the D3.js force simulation engine.
@@ -46,10 +61,10 @@ The **Layout** panel provides control over the rendering and the D3.js force sim
 The **Export** suite allows users to extract visualizations and tabular data.
 
 * **Locus ID Format:** A toggle that defines whether exported data files prioritize RAP-DB or MSU formatting for gene identifiers.
-* **Export Image (.png):** Generates a snapshot of the canvas. A "Show all edges" toggle forces the renderer to paint edges connected to transparent (hidden) nodes.
-* **Export Edges (.tsv):** Downloads visible topological links, including source/target mapping, edge weights, IRP scores, directionality flags, and interaction signs (`+`/`-`).
-* **Export Layout (.json):** Saves spatial coordinates (`x`, `y`), visibility states, and metadata of the canvas, allowing the user to import and restore the visualization.
-* **Export Genes (.tsv):** Downloads a tabular list of visible genes along with flattened metadata columns (Symbol, Transcription Factor families, mapped pathways).
+* **Export Image (.png):** Generates a high-resolution snapshot of the canvas and active node/cluster legends. A "Show all edges" toggle forces the renderer to paint edges connected to transparent (hidden) nodes.
+* **Export Edges (.tsv):** Downloads visible topological links, including source/target mapping, edge weights, IRP scores, directionality flags, interaction signs (`+`/`-`), and active cluster metadata (`#RICE2NET_*` header lines with cluster names, colors, and p-value threshold plus `Source_Cluster` / `Target_Cluster` columns).
+* **Export Layout (.json):** Saves spatial coordinates (`x`, `y`), node/edge metadata, and active cluster definitions (gene memberships, names, colors, and ORA threshold), allowing the user to import and restore the full visualization.
+* **Export Genes (.tsv):** Downloads a tabular list of visible genes along with flattened metadata columns (Cluster ID/Name/Color/Threshold, Symbol, Transcription Factor families, GO terms, KEGG pathways, MapMan bins, and UniProt entries).
 
 </details>
 
@@ -57,9 +72,9 @@ The **Export** suite allows users to extract visualizations and tabular data.
 
 The **Import** section allows users to load networks or restore saved application states, overriding the Neo4j database connection.
 
-* **Load Layout JSON:** Restores a network exported via the "Export Layout (.json)" function. This restores spatial positioning without recalculating the physics engine.
-* **Load Edges TSV:** Accepts a `.tsv`, `.csv`, or `.txt` file containing Source and Target columns (with Weights). The application builds the topology, queries the database for metadata, and calculates a physics layout.
-* **Revert to Database:** An active import displays its filename in the panel alongside an "✕" button. Clicking this button clears the imported data and restores the network from the database.
+* **Load Layout JSON:** Restores a network exported via the "Export Layout (.json)" function without recalculating the physics engine. If cluster metadata is present, clusters are restored with their saved names/colors and automatically re-analyzed with **ORA** using the saved adjusted p-value threshold.
+* **Load Edges TSV:** Accepts a `.tsv`, `.csv`, or `.txt` file containing Source and Target columns (with optional Weights, IRP scores, Signs, and Rice2Net cluster metadata/columns). The application builds the topology, queries the database for metadata, calculates a physics layout, and automatically restores clusters and runs **ORA** when cluster information is included.
+* **Revert to Database:** An active import displays its filename in the panel alongside an "✕" button. Clicking this button clears the imported data, resets in-memory clusters and regulation edges, and restores the reference network and its precomputed global clusters from the database.
 
 </details>
 
@@ -70,7 +85,7 @@ The **Import** section allows users to load networks or restore saved applicatio
 Rice2Net aggregates annotations and sequence identifiers from databases to provide context for each node. The following annotation sources are integrated into the database:
 
 * **Gene Identifiers:** Primary cross-referencing utilizes **RAP-DB** (Rice Annotation Project) and **MSU** (Michigan State University) locus IDs, alongside gene symbols and GenBank identifiers.
-* **Gene Ontology (GO):** Functional classification terms (Biological Process, Molecular Function, Cellular Component) mapped to EBI QuickGO URLs.
+* **Gene Ontology (GO):** Functional classification terms (Biological Process, Molecular Function, Cellular Component) mapped to EBI QuickGO URLs, together with full GO DAG parent-child relationships (`IS_A` and `PART_OF`) stored directly in Neo4j for true-path ORA propagation.
 * **MapMan:** Ontology bin codes detailing metabolic pathways and cellular processes.
 * **KEGG:** (Kyoto Encyclopedia of Genes and Genomes) Mapped pathway codes and network descriptions.
 * **UniProt:** Cross-referenced protein database entries containing reviewed status, protein names, and alias mapping.
@@ -120,9 +135,20 @@ Motif references used in TF-Promoter Binding are sourced from **PlantTFDB**, **J
 
 <details><summary><b>Functional Clusters</b></summary>
 
-> **Note:** The **Functionally Enriched Clusters** features have been removed in the current version of Rice2Net and its database, though the underlying frontend architecture is preserved with the intention of reimplementing them in a future release.
+Community detection and Over-Representation Analysis (ORA) are integrated directly into Rice2Net using WebAssembly **Infomap** (`@mapequation/infomap`) and exact upper-tail Hypergeometric tests with per-source Benjamini–Hochberg FDR (`@stdlib/stats`) across **GO:BP**, **GO:MF**, **GO:CC** (propagated up the GO DAG in Neo4j), **MapMan**, and **KEGG**.
 
-Community detection within networks was originally performed using Python **Infomap**, with modules functionally annotated using **g:GOSt** (**g:Profiler**).
+For instant startup on the global coexpression network, 8 curated functional clusters (`Markov Time = 1.5`, visible-network annotated background, `FDR ≤ 0.05`, spanning `21,075` genes and `1,776` precomputed `ENRICHED_IN` ORA associations) are stored directly in Neo4j:
+
+| Cluster | Assigned Genes | Significant ORA Terms |
+| --- | ---: | ---: |
+| **C1 - Translation** | 4,575 | 392 |
+| **C2 - External stimulus response** | 4,208 | 300 |
+| **C3 - Photosynthesis** | 3,734 | 314 |
+| **C4 - Cell wall organisation** | 3,558 | 353 |
+| **C5 - Stress response & defense** | 2,833 | 42 |
+| **C6 - Transcriptional regulation** | 1,367 | 242 |
+| **C7 - Protein folding** | 576 | 93 |
+| **C8 - Photosystem II** | 224 | 40 |
 
 </details>
 
@@ -130,57 +156,58 @@ Community detection within networks was originally performed using Python **Info
 
 Rice2Net operates as a client-side application supported by a Node.js Express middleware server connecting to a Neo4j graph database. The application logic is segmented into domain-specific modules.
 
+<p align="center">
+  <img src="figures/rice2net_scheme.png" alt="Rice2Net Architecture Scheme" width="100%">
+</p>
+
 <details><summary><b>Client Modules</b></summary>
 
-* **`globals.js`:** Initializes global states, feature flags, visual configuration parameters, color palettes, and random number generation functions.
-* **`api.js`:** Unified web data adapter (`window.RICE2NET_API`) centralizing backend HTTP requests (and Static Demo Mode hooks) for topology, metadata, regulation, and motif binding queries.
-* **`data.js`:** Executes database initialization routines, builds and caches graph adjacency structures, manages IRP edge filtering, and handles node metadata hydration and in-memory reversion.
-* **`core.js`:** Processes local file imports (JSON/TSV) and runs localized force simulation updates during node manipulation.
+* **`globals.js`:** Initializes global states (including `CLUSTER_STATE` and `REGULATION_STATE`), feature flags, visual configuration parameters, color palettes, and random number generation functions.
+* **`api.js`:** Unified web data adapter (`window.RICE2NET_API`) centralizing backend HTTP requests (and Static Demo Mode hooks) for topology, clusters, metadata, source-filtered regulation/motif queries, Community Discovery, ORA, and lazy overlap-gene lookups.
+* **`data.js`:** Executes database initialization routines, loads precomputed global clusters, builds and caches graph adjacency structures, manages IRP edge filtering, handles source-filtered promoter-binding motif fetching, and manages metadata hydration and in-memory reversion.
+* **`core.js`:** Processes local file imports (JSON/TSV, including saved cluster restoration and automatic ORA re-analysis) and runs localized force simulation updates during node manipulation.
 * **`filter.js`:** Resolves gene identifiers (RAP, MSU, identifiers, symbols), calculates subnetwork traversal based on user targets, and executes targeted graph manipulation actions (expand, pop, contract).
 * **`sim.js`:** Manages D3 force layout calculation, physical parameters, batched HTML5 Canvas rendering with viewport culling, and geometric drawing rules for directional edges.
-* **`graph.js`:** Implements canvas zoom and pan interactions, calculates view centering, and recalculates visual states during filtering.
-* **`legends.js`:** Generates HTML legend elements and updates data visibility toggles for nodes and edges (with dormant support for clusters).
+* **`graph.js`:** Implements canvas zoom and pan interactions, calculates view centering, and recalculates visual states during filtering and cluster overlays.
+* **`legends.js`:** Generates HTML legend elements and visibility toggles for node types, edge types (revealing Regulation after a Promoter-Binding Motifs search), and interactive cluster controls (color picker, inline rename, ORA inspect, toggle, delete).
+* **`analyze.js`:** Controls the **Analyze** panel workflows (**Community Discovery** Infomap + ORA, imported-cluster ORA re-analysis, interactive multi-sort ORA Report modal with horizontal Fold bars, and **Promoter-Binding Motifs** source-filtered search).
 * **`ui.js`:** Iterates through visible entities to compute and update statistical counters.
 * **`kegg.js`:** Formats external database queries and renders pathway map iframes.
-* **`controls.js`:** Manages user input parameters, debounced IRP threshold sliders, and visual theme toggles.
-* **`exporters.js`:** Iterates current graph states to compile exportable image and tabular/JSON files, using batched metadata lookups for gene exports.
-* **`interactions.js`:** Processes mouse events, manages coordinate mapping, displays tooltips (including edge signs), renders node/edge detail panels, and triggers context menus.
+* **`controls.js`:** Manages user input parameters, debounced IRP threshold sliders, and visual theme toggles (preserving custom cluster colors).
+* **`exporters.js`:** Compiles exportable PNG images, Edges TSV, Layout JSON, and Genes TSV files including active cluster assignments, colors, names, and ORA p-value threshold.
+* **`interactions.js`:** Processes mouse events, manages coordinate mapping, displays tooltips (including edge signs), renders node/edge detail panels (including cluster ORA shortcuts and source-filtered motif tables), and triggers context menus.
 
 </details>
 
 <details><summary><b>Server Communication</b></summary>
 
-The application retrieves graph data using asynchronous HTTP requests routed through `app/api.js` to middleware endpoints.
+The application retrieves graph data and runs analyses using asynchronous HTTP requests routed through `app/api.js` to Express middleware endpoints (`server/server.js` and `server/community_discovery.js`).
 
-* **Network Initialization:** Upon application load, the client calls `/api/network/init`. This endpoint streams node identifiers, base spatial coordinates, node degrees, and signed coexpression edges (`weight`, `irp`, `sign`).
-* **Metadata Hydration:** Selecting a node queries `/api/network/node/:id` (and gene TSV exports batch lookups via `POST /api/network/nodes/batch`). The server executes optional pattern matching to return associated Gene Ontology terms, MapMan bins, KEGG pathways, UniProt cross-references, and Transcription Factor classifications.
-* **Regulation Matching:** Activating regulation visibility prompts the application to batch active node pairs and submit them to `POST /api/network/edges/regulates`. The endpoint identifies directional relationships and returns the results to append to the active graph.
-* **TF-Promoter Binding:** Inspecting a regulatory edge triggers a query to `GET /api/network/edges/binds` (with batch support via `POST /api/network/edges/binds`) utilizing the source and target node identifiers to retrieve motif sequences, strand coordinates, p-values, and q-values.
-* **Cluster Loading *(Currently Inactive)*:** The `/api/network/clusters` endpoint remains available in the backend for future reimplementation of Functionally Enriched Clusters.
+* **Network Initialization:** Upon application load, the client calls `GET /api/network/init` to stream node identifiers, spatial coordinates, degrees, and signed coexpression edges (`weight`, `irp`, `sign`), alongside `GET /api/network/clusters` to load the 8 precomputed global clusters, colors, and `ENRICHED_IN` ORA results.
+* **Community Discovery & ORA:** Clicking **GO** in *Analyze → Community Discovery* sends visible nodes/edges and parameters to `POST /api/analyze/community-discovery` (running `@mapequation/infomap` + exact Hypergeometric/BH-FDR ORA against a cached Neo4j annotation index with GO DAG propagation). Re-importing files with saved clusters invokes `POST /api/analyze/ora` (ORA-only), and expanding overlap genes on DB-stored clusters queries `POST /api/analyze/term-genes`.
+* **Metadata Hydration:** Selecting a node queries `GET /api/network/node/:id` (and gene TSV exports batch lookups via `POST /api/network/nodes/batch`).
+* **Promoter-Binding Motifs & Regulation:** Clicking **GO** in *Analyze → Promoter-Binding Motifs* batches visible edge pairs with selected sources (`PlantTFDB`, `JASPAR Core`, `JASPAR Unvalidated`, `CIS-BP`) to `POST /api/network/edges/regulates`, filtering against the four boolean source flags on `REGULATES` relationships. Inspecting a regulatory edge queries `GET /api/network/edges/binds` (or `POST /api/network/edges/binds`) filtered by the same selected sources.
 
 </details>
 
 <details><summary><b>Database Architecture</b></summary>
 
-The data is stored in a Neo4j graph database. As illustrated in `db_structure.png`, the schema relies on a central `Gene` node. Peripheral nodes store annotation metadata and connect to the core `Gene` nodes via specific directional relationships. Regulatory and coexpression networks are formed by self-referential relationships between `Gene` nodes.
+The data is stored in a Neo4j graph database. The schema relies on a central `Gene` node. Peripheral nodes store annotation metadata, ontology hierarchies (`MapMan` `SUBCATEGORY_OF`, `GOTerm` `IS_A` and `PART_OF`), and precomputed global `Cluster` modules (`BELONGS_TO_CLUSTER` and `ENRICHED_IN`). Regulatory and coexpression networks are formed by self-referential relationships between `Gene` nodes.
 
-<p align="center">
-  <img src="figures/db_structure.png" alt="Node and edge structure of the Neo4j Database." width="100%">
-</p>
-
-**Node Statistics** *(162,736 total nodes; 21,167 `Gene` nodes connected in the global coexpression network)*
+**Node Statistics** *(164,770 total nodes; 21,167 `Gene` nodes connected in the global coexpression network)*
 
 | Node Label | Record Count |
 | --- | ---: |
 | `Uniprot` | 102,601 |
 | `Gene` | 46,036 |
 | `MapMan` | 8,751 |
-| `GOTerm` | 4,588 |
+| `GOTerm` | 6,614 |
 | `Motif` | 501 |
 | `Pathway` | 160 |
 | `TFFamily` | 99 |
+| `Cluster` | 8 |
 
-**Topology and Edge Statistics** *(23,211,967 total relationships)*
+**Topology and Edge Statistics** *(23,245,227 total relationships)*
 
 | Source Node | Relationship | Target Node | Edge Count |
 | --- | --- | --- | ---: |
@@ -189,13 +216,15 @@ The data is stored in a Neo4j graph database. As illustrated in `db_structure.pn
 | `Gene` | `INTERACTS_WITH` | `Gene` | 824,461 *(788,173 `+`, 36,288 `-`)* |
 | `Gene` | `HAS_GO_TERM` | `GOTerm` | 57,794 |
 | `Gene` | `HAS_UNIPROT` | `Uniprot` | 49,005 |
+| `Gene` | `BELONGS_TO_CLUSTER` | `Cluster` | 21,075 |
 | `Gene` | `HAS_MAPMAN` | `MapMan` | 16,237 |
 | `Gene` | `IN_PATHWAY` | `Pathway` | 11,261 |
+| `GOTerm` | `IS_A` | `GOTerm` | 9,586 |
 | `MapMan` | `SUBCATEGORY_OF` | `MapMan` | 8,719 |
 | `Gene` | `BELONGS_TO_FAMILY` | `TFFamily` | 2,425 |
+| `Cluster` | `ENRICHED_IN` | `GOTerm` / `MapMan` / `Pathway` | 1,776 |
 | `Gene` | `HAS_MOTIF` | `Motif` | 984 |
-
-> **Note:** `Cluster` nodes and `BELONGS_TO_CLUSTER` relationships (Functionally Enriched Clusters) were removed in the current version, with the intention of reimplementing this feature in a future release.
+| `GOTerm` | `PART_OF` | `GOTerm` | 823 |
 
 </details>
 
