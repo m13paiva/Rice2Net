@@ -35,14 +35,23 @@ let HOVERED_EDGE = null;
 /** Primary Raw Network Topology Storage */
 let RAW_DATA = { nodes: [], links: [], adjacency: new Map() };
 
-/** Functional Cluster Annotations State (dormant when CLUSTERS_ENABLED is false) */
-const CLUSTERS_ENABLED = false;
-window.CLUSTERS_ENABLED = CLUSTERS_ENABLED;
+/** Functional Cluster Annotations State (populated on global init, Community Discovery, or import) */
+window.CLUSTERS_ENABLED = true;
 let CLUSTER_STATE = {
-  data: new Map(),
-  active: new Set(),
-  legend: [],
+  data: new Map(),      // Map<geneId, clusterId>
+  active: new Set(),    // Set<clusterId>
+  legend: [],           // Array<{ id, name, color, count, genes, terms, topTerm, customColor }>
+  byId: new Map(),      // Map<clusterId, clusterObj>
   isAvailable: false,
+  source: null,         // "db" | "discovered" | "imported" | null
+  lastStats: null,
+};
+
+/** Promoter-Binding Motif (Regulation) Analysis State */
+window.REGULATION_STATE = {
+  isAvailable: false,
+  sources: [],
+  edgeCount: 0,
 };
 
 /**

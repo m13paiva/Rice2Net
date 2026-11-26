@@ -76,17 +76,18 @@ window.reapplyColors = function () {
     let isTargetMatched = false;
 
     // Evaluate functional cluster overlays
-    if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(n.id)) {
-      const clusterName = CLUSTER_STATE.data.get(n.id);
-      if (CLUSTER_STATE.active.has(clusterName)) {
-        const cMeta = CLUSTER_STATE.legend.find((x) => x.name === clusterName);
-        if (cMeta) {
+    if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(String(n.id))) {
+      const clusterId = CLUSTER_STATE.data.get(String(n.id));
+      if (CLUSTER_STATE.active.has(clusterId)) {
+        const cMeta =
+          (CLUSTER_STATE.byId && CLUSTER_STATE.byId.get(clusterId)) ||
+          CLUSTER_STATE.legend.find((x) => x.id === clusterId || x.name === clusterId);
+        if (cMeta && isVisible) {
           isHighlighted = true;
-          isVisible = true;
           if (baseSpec.visibilityKey === "Gene" || baseSpec.visibilityKey === "AnnotatedGene") {
             finalColor = cMeta.color;
           }
-          finalLabel = clusterName;
+          finalLabel = cMeta.name;
         }
       }
     }

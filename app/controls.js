@@ -163,10 +163,12 @@ window.toggleTheme = function (isLight) {
     Array.isArray(CLUSTER_STATE.legend)
   ) {
     CLUSTER_STATE.legend.forEach((cluster, index) => {
-      cluster.color =
-        CONFIG.visuals.colors.Clusters[
-          index % CONFIG.visuals.colors.Clusters.length
-        ];
+      if (!cluster.customColor) {
+        cluster.color =
+          CONFIG.visuals.colors.Clusters[
+            index % CONFIG.visuals.colors.Clusters.length
+          ];
+      }
     });
   }
 

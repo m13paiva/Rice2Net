@@ -492,7 +492,7 @@ window.resetToFull = async function () {
   }
 
   if (hasCachedPos) {
-    loaderText.innerText = "INSTANT LOAD...";
+    loaderText.innerText = "FINALIZING NETWORK VIEW...";
     await sleep(50);
     loader.style.display = "none";
     finishSetup(true);

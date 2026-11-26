@@ -19,9 +19,9 @@ function isNodeVisibleForExport(node, targetSet = null) {
   const baseSpec = window.getTypeVisualSpec ? window.getTypeVisualSpec(node.originalType || "Gene") : { visibilityKey: "Gene" };
   if (VISIBILITY_STATE[baseSpec.visibilityKey] > 0) return true;
 
-  if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(node.id)) {
-    const clusterName = CLUSTER_STATE.data.get(node.id);
-    if (CLUSTER_STATE.active.has(clusterName)) return true;
+  if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(String(node.id))) {
+    const clusterId = CLUSTER_STATE.data.get(String(node.id));
+    if (CLUSTER_STATE.active.has(clusterId)) return true;
   }
 
   const resolvedTargetSet = targetSet || (typeof getExportTargetSet === 'function' ? getExportTargetSet() : new Set());
@@ -122,19 +122,136 @@ function initExportControls() {
 }
 
 /**
+ * Builds a serializable cluster metadata bundle restricted to currently visible nodes.
+ * Includes cluster IDs, names, colors, gene lists (in active export ID format), and ORA parameters
+ * (including adjusted p-value threshold for automatic ORA re-analysis upon re-import).
+ */
+function buildExportClusterBundle(visibleNodeMap) {
+  if (
+    !window.CLUSTERS_ENABLED ||
+    typeof CLUSTER_STATE === "undefined" ||
+    CLUSTER_STATE.isAvailable === false ||
+    !Array.isArray(CLUSTER_STATE.legend) ||
+    CLUSTER_STATE.legend.length === 0
+  ) {
+    return null;
+  }
+
+  const stats = CLUSTER_STATE.lastStats || {};
+  const pvalThreshold =
+    Number.isFinite(Number(stats.pvalThreshold)) && Number(stats.pvalThreshold) > 0
+      ? Number(stats.pvalThreshold)
+      : parseFloat(document.getElementById("cd-pval-threshold")?.value) || 0.05;
+  const backgroundMode =
+    (stats.background && stats.background.mode) ||
+    document.getElementById("cd-bg-mode")?.value ||
+    "network";
+  const annotatedOnly =
+    stats.background && stats.background.annotatedOnly !== undefined
+      ? Boolean(stats.background.annotatedOnly)
+      : true;
+  const markovTime =
+    Number.isFinite(Number(stats.markovTime)) && Number(stats.markovTime) > 0
+      ? Number(stats.markovTime)
+      : null;
+
+  const items = [];
+  const geneToCluster = new Map();
+
+  CLUSTER_STATE.legend.forEach((c) => {
+    const cid = String(c.id || c.name);
+    if (!CLUSTER_STATE.active.has(cid)) return;
+    const exportedGenes = [];
+    const seen = new Set();
+    const sourceGenes = Array.isArray(c.genes) ? c.genes : [];
+
+    sourceGenes.forEach((gid) => {
+      const node = visibleNodeMap.get(String(gid));
+      if (!node) return;
+      const outId = window.getExportNodeId ? window.getExportNodeId(node) : String(node.id);
+      if (outId && !seen.has(outId)) {
+        seen.add(outId);
+        exportedGenes.push(outId);
+        geneToCluster.set(String(node.id), {
+          id: cid,
+          name: c.name,
+          color: c.color,
+          pvalThreshold,
+        });
+      }
+    });
+
+    if (exportedGenes.length > 0) {
+      items.push({
+        id: cid,
+        name: c.name,
+        color: c.color,
+        customColor: Boolean(c.customColor),
+        genes: exportedGenes,
+      });
+    }
+  });
+
+  if (items.length === 0) return null;
+
+  return {
+    pvalThreshold,
+    backgroundMode,
+    annotatedOnly,
+    markovTime,
+    items,
+    geneToCluster,
+  };
+}
+
+/**
  * Exports visible network edges to a Tab-Separated Values (TSV) file.
+ * Includes cluster metadata comments (#RICE2NET_*) and Source_Cluster / Target_Cluster
+ * columns when clusters are active so re-importing restores clusters and re-runs ORA.
  */
 window.exportTSV = function () {
   try {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
 
     const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
-    const rows = ["Source\tTarget\tWeight\tIRP_score\tDirectional\tSign"];
     const nodeById = new Map();
+    const visibleNodeMap = new Map();
     for (let i = 0; i < nodes.length; i++) {
-      nodeById.set(String(nodes[i].id), nodes[i]);
+      const n = nodes[i];
+      nodeById.set(String(n.id), n);
+      if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
+      if ((n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) || n.color === CONFIG.visuals.colors.Transparent) continue;
+      visibleNodeMap.set(String(n.id), n);
     }
+
+    const clusterBundle = buildExportClusterBundle(visibleNodeMap);
+    const hasClusters = Boolean(clusterBundle);
+
+    const rows = [];
+    if (hasClusters) {
+      const metaObj = {
+        pvalThreshold: clusterBundle.pvalThreshold,
+        backgroundMode: clusterBundle.backgroundMode,
+        annotatedOnly: clusterBundle.annotatedOnly,
+        markovTime: clusterBundle.markovTime,
+      };
+      rows.push(`#RICE2NET_CLUSTERS_META\t${JSON.stringify(metaObj)}`);
+      clusterBundle.items.forEach((c) => {
+        const cleanName = String(c.name || "").replace(/[\t\r\n]+/g, " ");
+        rows.push(`#RICE2NET_CLUSTER\t${c.id}\t${cleanName}\t${c.color || ""}`);
+      });
+      rows.push("Source\tTarget\tWeight\tIRP_score\tDirectional\tSign\tSource_Cluster\tTarget_Cluster");
+    } else {
+      rows.push("Source\tTarget\tWeight\tIRP_score\tDirectional\tSign");
+    }
+
     let exportedCount = 0;
+
+    const getClusterCell = (node) => {
+      if (!hasClusters || !node) return "";
+      const cInfo = clusterBundle.geneToCluster.get(String(node.id));
+      return cInfo ? cInfo.id : "";
+    };
 
     links.forEach((l) => {
       if (window.isEdgeVisible && !window.isEdgeVisible(l)) return;
@@ -166,7 +283,12 @@ window.exportTSV = function () {
 
           if (!sOut || !tOut) return;
 
-          rows.push(`${sOut}\t${tOut}\t${weight}\t${irpVal}\ttrue\t${signVal}`);
+          const baseRow = `${sOut}\t${tOut}\t${weight}\t${irpVal}\ttrue\t${signVal}`;
+          rows.push(
+            hasClusters
+              ? `${baseRow}\t${getClusterCell(dirSrcNode)}\t${getClusterCell(dirTgtNode)}`
+              : baseRow
+          );
           exportedCount++;
         });
       } else {
@@ -175,7 +297,12 @@ window.exportTSV = function () {
 
         if (!sOut || !tOut) return;
 
-        rows.push(`${sOut}\t${tOut}\t${weight}\t${irpVal}\tfalse\t${signVal}`);
+        const baseRow = `${sOut}\t${tOut}\t${weight}\t${irpVal}\tfalse\t${signVal}`;
+        rows.push(
+          hasClusters
+            ? `${baseRow}\t${getClusterCell(sNode)}\t${getClusterCell(tNode)}`
+            : baseRow
+        );
         exportedCount++;
       }
     });
@@ -196,7 +323,7 @@ window.exportTSV = function () {
 };
 
 /**
- * Exports visible nodes and links to a JSON layout structure file.
+ * Exports visible nodes, links, and active cluster metadata to a JSON layout structure file.
  */
 window.exportJSON = async function () {
   try {
@@ -251,7 +378,19 @@ window.exportJSON = async function () {
       }
     });
 
-    const payload = JSON.stringify({ nodes: exportNodes, edges: exportLinks }, null, 2);
+    const exportObj = { nodes: exportNodes, edges: exportLinks };
+    const clusterBundle = buildExportClusterBundle(visibleNodeMap);
+    if (clusterBundle) {
+      exportObj.clusters = {
+        pvalThreshold: clusterBundle.pvalThreshold,
+        backgroundMode: clusterBundle.backgroundMode,
+        annotatedOnly: clusterBundle.annotatedOnly,
+        markovTime: clusterBundle.markovTime,
+        items: clusterBundle.items,
+      };
+    }
+
+    const payload = JSON.stringify(exportObj, null, 2);
     const blob = new Blob([payload], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -321,8 +460,12 @@ window.exportGenesTSV = async function () {
       }
     }
 
+    const visibleNodeMap = new Map(exportNodes.map((n) => [String(n.id), n]));
+    const clusterBundle = buildExportClusterBundle(visibleNodeMap);
+
     const headers = [
-      "Gene_ID", "Type", "Visual_Label", "Symbol", "MSU_ID", "Identifier",
+      "Gene_ID", "Type", "Visual_Label", "Cluster_ID", "Cluster_Name", "Cluster_Color", "Cluster_Pval_Threshold",
+      "Symbol", "MSU_ID", "Identifier",
       "Full_Name", "KEGG_Gene", "TF_Transcripts", "TF_Family", "GO_Terms",
       "KEGG_Pathways", "MapMan_Bins", "Uniprot_Entries"
     ];
@@ -332,6 +475,12 @@ window.exportGenesTSV = async function () {
       row.push(window.getExportNodeId ? window.getExportNodeId(n) : n.id);
       row.push(n.originalType || "Gene");
       row.push(n.typeLabel || "Gene");
+
+      const cInfo = clusterBundle ? clusterBundle.geneToCluster.get(String(n.id)) : null;
+      row.push(cInfo ? cInfo.id : "");
+      row.push(cInfo ? String(cInfo.name || "").replace(/[\t\r\n]+/g, " ") : "");
+      row.push(cInfo ? (cInfo.color || "") : "");
+      row.push(cInfo ? cInfo.pvalThreshold : "");
 
       const d = n.dbData || {};
 
@@ -407,7 +556,7 @@ window.exportPNG = function () {
 
   if (loader && loaderText) {
     loader.style.display = "block";
-    loaderText.innerText = "CRAFTING HIGH-RES EXPORT... 0%";
+    loaderText.innerText = "GENERATING HIGH-RESOLUTION IMAGE...";
     if (progressBar) progressBar.style.width = "100%";
   }
 
@@ -445,7 +594,9 @@ window.exportPNG = function () {
         const baseSpec = window.getTypeVisualSpec ? window.getTypeVisualSpec(n.originalType || "Gene") : { visibilityKey: "Gene" };
         presentTypes.add(baseSpec.visibilityKey);
         if (targetSet.has(String(n.id))) hasPresentTarget = true;
-        if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(n.id)) presentClusters.add(CLUSTER_STATE.data.get(n.id));
+        if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(String(n.id))) {
+          presentClusters.add(CLUSTER_STATE.data.get(String(n.id)));
+        }
       }
 
       if (!hasVisible) { minX = 0; maxX = 800; minY = 0; maxY = 600; }
@@ -481,9 +632,10 @@ window.exportPNG = function () {
       addLegendItem(nodeItems, "Gene", CONFIG.visuals.colors.Gene, "Other Gene", "circle", true);
 
       const activeClusters = window.CLUSTERS_ENABLED
-        ? [...CLUSTER_STATE.legend]
-            .sort((a, b) => String(a.name).localeCompare(String(b.name)))
-            .filter((c) => CLUSTER_STATE.active.has(c.name) && presentClusters.has(c.name))
+        ? [...CLUSTER_STATE.legend].filter((c) => {
+            const key = c.id || c.name;
+            return CLUSTER_STATE.active.has(key) && presentClusters.has(key);
+          })
         : [];
 
       const items = [];

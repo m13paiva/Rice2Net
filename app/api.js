@@ -314,22 +314,29 @@
   }
 
   /**
-   * 5. Query regulatory directions for a batch of undirected gene pairs
+   * 5. Query regulatory directions for a batch of undirected gene pairs (optionally filtered by motif sources)
    */
-  async function checkRegulates(pairs) {
+  async function checkRegulates(pairs, sources = null) {
     if (!Array.isArray(pairs) || pairs.length === 0) {
       return { edges: [] };
     }
 
     if (getMode() === "static") {
-      const { regPairMap } = await loadStaticRegulation();
+      const { regPairMap, bindsPairMap } = await loadStaticRegulation();
+      const sourceSet = Array.isArray(sources) ? new Set(sources) : null;
       const edges = [];
       pairs.forEach((p) => {
         if (!p || !p.s || !p.t) return;
         const a = String(p.s);
         const b = String(p.t);
         const pairKey = a < b ? `${a}|${b}` : `${b}|${a}`;
-        const directions = regPairMap.get(pairKey);
+        let directions = regPairMap.get(pairKey);
+        if (directions && directions.length > 0 && sourceSet) {
+          directions = directions.filter((d) => {
+            const binds = bindsPairMap.get(`${d.src}->${d.tgt}`) || [];
+            return binds.some((m) => sourceSet.has(m.motif_source));
+          });
+        }
         if (directions && directions.length > 0) {
           edges.push({
             original_s: a,
@@ -342,42 +349,53 @@
       return { edges };
     }
 
+    const bodyPayload = { pairs };
+    if (Array.isArray(sources)) bodyPayload.sources = sources;
+
     return fetchJson(`${getApiBase()}/api/network/edges/regulates`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pairs }),
+      body: JSON.stringify(bodyPayload),
     });
   }
 
   /**
    * 6. Fetch TF-promoter motif binding events for a single directed edge
    */
-  async function getBinds(source, target) {
+  async function getBinds(source, target, sources = null) {
     if (!source || !target) return { binds: [] };
 
     if (getMode() === "static") {
       const { bindsPairMap } = await loadStaticRegulation();
       const key = `${String(source)}->${String(target)}`;
-      return { binds: bindsPairMap.get(key) || [] };
+      let binds = bindsPairMap.get(key) || [];
+      if (Array.isArray(sources)) {
+        const sourceSet = new Set(sources);
+        binds = binds.filter((b) => sourceSet.has(b.motif_source));
+      }
+      return { binds };
     }
 
-    return fetchJson(
-      `${getApiBase()}/api/network/edges/binds?source=${encodeURIComponent(
-        source
-      )}&target=${encodeURIComponent(target)}`
-    );
+    let url = `${getApiBase()}/api/network/edges/binds?source=${encodeURIComponent(
+      source
+    )}&target=${encodeURIComponent(target)}`;
+    if (Array.isArray(sources) && sources.length > 0) {
+      url += `&sources=${encodeURIComponent(sources.join(","))}`;
+    }
+    return fetchJson(url);
   }
 
   /**
    * 7. Fetch TF-promoter motif binding events for a batch of directed edges
    */
-  async function getBindsBatch(pairs) {
+  async function getBindsBatch(pairs, sources = null) {
     if (!Array.isArray(pairs) || pairs.length === 0) {
       return { bindsByPair: {} };
     }
 
     if (getMode() === "static") {
       const { bindsPairMap } = await loadStaticRegulation();
+      const sourceSet = Array.isArray(sources) ? new Set(sources) : null;
       const bindsByPair = {};
       pairs.forEach((p) => {
         const src = String(p.source || p.s || "");
@@ -385,16 +403,21 @@
         if (!src || !tgt) return;
         const key = `${src}->${tgt}`;
         if (bindsPairMap.has(key)) {
-          bindsByPair[key] = bindsPairMap.get(key);
+          let list = bindsPairMap.get(key);
+          if (sourceSet) list = list.filter((b) => sourceSet.has(b.motif_source));
+          bindsByPair[key] = list;
         }
       });
       return { bindsByPair };
     }
 
+    const bodyPayload = { pairs };
+    if (Array.isArray(sources)) bodyPayload.sources = sources;
+
     const res = await fetch(`${getApiBase()}/api/network/edges/binds`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pairs }),
+      body: JSON.stringify(bodyPayload),
     });
 
     if (res.ok) {
@@ -410,7 +433,7 @@
           const tgt = String(p.target || p.t || "");
           if (!src || !tgt) return;
           try {
-            const data = await getBinds(src, tgt);
+            const data = await getBinds(src, tgt, sources);
             bindsByPair[`${src}->${tgt}`] = data.binds || [];
           } catch (e) {
             console.warn(`Fallback binds fetch failed for ${src}->${tgt}`);
@@ -423,6 +446,84 @@
     const err = new Error(`Batch binds request failed (${res.status})`);
     err.status = res.status;
     throw err;
+  }
+
+  /**
+   * 8. Run Infomap Community Discovery + ORA on visible graph
+   */
+  async function runCommunityDiscovery(payload) {
+    if (getMode() === "static") {
+      throw new Error(
+        "Community Discovery requires the Rice2Net backend server (not available in static Web Demo mode)."
+      );
+    }
+
+    const res = await fetch(`${getApiBase()}/api/analyze/community-discovery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
+
+    let body = null;
+    try {
+      body = await res.json();
+    } catch (e) {}
+
+    if (!res.ok) {
+      const msg =
+        (body && body.error) ||
+        `Community Discovery request failed (${res.status})`;
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
+    }
+    return body;
+  }
+
+  /**
+   * 9. Run ORA-only on pre-defined or imported clusters
+   */
+  async function runOra(payload) {
+    if (getMode() === "static") {
+      throw new Error(
+        "ORA re-analysis requires the Rice2Net backend server (not available in static Web Demo mode)."
+      );
+    }
+
+    const res = await fetch(`${getApiBase()}/api/analyze/ora`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
+
+    let body = null;
+    try {
+      body = await res.json();
+    } catch (e) {}
+
+    if (!res.ok) {
+      const msg =
+        (body && body.error) || `ORA request failed (${res.status})`;
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
+    }
+    return body;
+  }
+
+  /**
+   * 10. Lazily resolve overlapping graph gene IDs for a DB-stored cluster term
+   */
+  async function getTermGenes(payload) {
+    if (getMode() === "static") {
+      return { genes: [] };
+    }
+
+    return fetchJson(`${getApiBase()}/api/analyze/term-genes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
   }
 
   window.RICE2NET_API = {
@@ -438,5 +539,8 @@
     checkRegulates,
     getBinds,
     getBindsBatch,
+    runCommunityDiscovery,
+    runOra,
+    getTermGenes,
   };
 })();

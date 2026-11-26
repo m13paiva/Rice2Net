@@ -17,7 +17,7 @@ window.importJSON = function (input) {
   const progressBar = document.getElementById("progress-bar");
 
   loader.style.display = "block";
-  document.getElementById("loader-text").innerText = "LOADING JSON... 0%";
+  document.getElementById("loader-text").innerText = "IMPORTING NETWORK LAYOUT... 0%";
   if (progressBar) progressBar.style.width = "0%";
 
   setTimeout(() => {
@@ -29,7 +29,15 @@ window.importJSON = function (input) {
           throw new Error("Invalid JSON structure");
 
         window.IS_IMPORTED_NETWORK = true;
-        VISIBILITY_STATE.EdgeBoth = 0;
+        if (typeof window.resetClustersState === "function") {
+          window.resetClustersState();
+        }
+        window.CLUSTERS_ENABLED = false;
+        if (typeof window.clearPromoterMotifAnalysis === "function") {
+          window.clearPromoterMotifAnalysis(true);
+        } else {
+          VISIBILITY_STATE.EdgeBoth = 0;
+        }
         if (typeof window.updateClusterAvailability === "function") window.updateClusterAvailability();
 
         const nameDisplay = document.getElementById('import-json-name');
@@ -68,7 +76,7 @@ window.importJSON = function (input) {
           }
         });
 
-        document.getElementById("loader-text").innerText = "LOADING JSON... 50%";
+        document.getElementById("loader-text").innerText = "IMPORTING NETWORK LAYOUT... 50%";
         if (progressBar) progressBar.style.width = "50%";
 
         links = json.edges
@@ -112,6 +120,17 @@ window.importJSON = function (input) {
 
         if (loader) loader.style.display = "none";
         finishSetup(true);
+
+        // Automatically restore saved clusters and run ORA-only re-analysis
+        if (
+          json.clusters &&
+          Array.isArray(json.clusters.items) &&
+          json.clusters.items.length > 0 &&
+          typeof window.loadImportedClustersAndRunOra === "function"
+        ) {
+          await window.loadImportedClustersAndRunOra(json.clusters);
+        }
+
         if (typeof window.showDemoImportNotice === "function") {
           window.showDemoImportNotice();
         }
@@ -136,18 +155,26 @@ window.importEdges = function (input) {
   const progressBar = document.getElementById("progress-bar");
 
   loader.style.display = "block";
-  document.getElementById("loader-text").innerText = "READING EDGE TABLE... 0%";
+  document.getElementById("loader-text").innerText = "IMPORTING EDGE TABLE... 0%";
   if (progressBar) progressBar.style.width = "0%";
 
   setTimeout(() => {
     const reader = new FileReader();
     reader.onload = async function (e) {
-      document.getElementById("loader-text").innerText = "PARSING GRAPH... 50%";
+      document.getElementById("loader-text").innerText = "BUILDING NETWORK GRAPH... 50%";
       if (progressBar) progressBar.style.width = "50%";
       await sleep(10);
 
       window.IS_IMPORTED_NETWORK = true;
-      VISIBILITY_STATE.EdgeBoth = 0;
+      if (typeof window.resetClustersState === "function") {
+        window.resetClustersState();
+      }
+      window.CLUSTERS_ENABLED = false;
+      if (typeof window.clearPromoterMotifAnalysis === "function") {
+        window.clearPromoterMotifAnalysis(true);
+      } else {
+        VISIBILITY_STATE.EdgeBoth = 0;
+      }
       if (typeof window.updateClusterAvailability === "function") window.updateClusterAvailability();
 
       const nameDisplay = document.getElementById('import-edges-name');
@@ -160,7 +187,43 @@ window.importEdges = function (input) {
       if (jsonInfo) jsonInfo.style.display = 'none';
 
       const text = e.target.result;
-      const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      const rawLines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+
+      // Parse optional Rice2Net cluster metadata comments (#RICE2NET_*) and strip comment lines
+      let importedClusterMeta = null;
+      const importedClusterDefs = new Map(); // clusterId -> { id, name, color, genes: Set }
+      const lines = [];
+
+      for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i];
+        if (line.startsWith("#RICE2NET_CLUSTERS_META\t")) {
+          try {
+            importedClusterMeta = JSON.parse(line.slice("#RICE2NET_CLUSTERS_META\t".length));
+          } catch (err) {}
+          continue;
+        }
+        if (line.startsWith("#RICE2NET_CLUSTER\t")) {
+          const parts = line.split("\t");
+          if (parts.length >= 3) {
+            const cid = parts[1].trim();
+            const cname = parts[2].trim();
+            const ccolor = parts[3] ? parts[3].trim() : null;
+            if (cid) {
+              importedClusterDefs.set(cid, {
+                id: cid,
+                name: cname || cid,
+                color: ccolor || null,
+                customColor: Boolean(ccolor),
+                genes: new Set(),
+              });
+            }
+          }
+          continue;
+        }
+        if (line.trim().startsWith("#")) continue;
+        lines.push(line);
+      }
+
       if (lines.length === 0) {
         alert("No valid edges found.");
         loader.style.display = "none";
@@ -176,6 +239,8 @@ window.importEdges = function (input) {
         weight: 2,
         irp: -1,
         sign: -1,
+        sourceCluster: -1,
+        targetCluster: -1,
       };
 
       const firstLine = lines[0].trim();
@@ -211,10 +276,27 @@ window.importEdges = function (input) {
             else if (h === "weight" || h === "w" || h === "val" || h === "value") colMap.weight = idx;
             else if (h === "irp_score" || h === "irp") colMap.irp = idx;
             else if (h === "sign") colMap.sign = idx;
+            else if (h === "source_cluster") colMap.sourceCluster = idx;
+            else if (h === "target_cluster") colMap.targetCluster = idx;
           });
           startIdx = 1;
         }
       }
+
+      const assignImportedCluster = (geneId, rawClusterVal) => {
+        const cid = String(rawClusterVal || "").trim();
+        if (!cid || cid === "-" || cid.toLowerCase() === "none") return;
+        if (!importedClusterDefs.has(cid)) {
+          importedClusterDefs.set(cid, {
+            id: cid,
+            name: cid,
+            color: null,
+            customColor: false,
+            genes: new Set(),
+          });
+        }
+        importedClusterDefs.get(cid).genes.add(geneId);
+      };
 
       for (let i = startIdx; i < lines.length; i++) {
         const parts = splitLine(lines[i]);
@@ -223,6 +305,15 @@ window.importEdges = function (input) {
         const s = parts[colMap.source] ? parts[colMap.source].trim() : parts[0].trim();
         const t = parts[colMap.target] ? parts[colMap.target].trim() : parts[1].trim();
         if (!s || !t) continue;
+
+        if (hasHeader) {
+          if (colMap.sourceCluster !== -1 && parts[colMap.sourceCluster] !== undefined) {
+            assignImportedCluster(s, parts[colMap.sourceCluster]);
+          }
+          if (colMap.targetCluster !== -1 && parts[colMap.targetCluster] !== undefined) {
+            assignImportedCluster(t, parts[colMap.targetCluster]);
+          }
+        }
 
         let w = 1;
         let irp = null;
@@ -328,7 +419,36 @@ window.importEdges = function (input) {
       RAW_DATA.adjacency = window.__APP_CORE__.buildAdjacency(nodes, links);
       RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
       RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+
+      // Restore clusters parsed from TSV header/columns and run ORA-only re-analysis
+      const importedItems = Array.from(importedClusterDefs.values())
+        .filter((c) => c.genes.size > 0)
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          color: c.color,
+          customColor: c.customColor,
+          genes: Array.from(c.genes),
+        }));
+
       startCalculation(true);
+
+      if (
+        importedItems.length > 0 &&
+        typeof window.loadImportedClustersAndRunOra === "function"
+      ) {
+        window.loadImportedClustersAndRunOra({
+          pvalThreshold: (importedClusterMeta && importedClusterMeta.pvalThreshold) || 0.05,
+          backgroundMode: (importedClusterMeta && importedClusterMeta.backgroundMode) || "network",
+          annotatedOnly:
+            importedClusterMeta && importedClusterMeta.annotatedOnly !== undefined
+              ? importedClusterMeta.annotatedOnly
+              : true,
+          markovTime: (importedClusterMeta && importedClusterMeta.markovTime) || null,
+          items: importedItems,
+        });
+      }
+
       if (typeof window.showDemoImportNotice === "function") {
         window.showDemoImportNotice();
       }

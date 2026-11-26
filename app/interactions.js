@@ -349,12 +349,16 @@ window.showEdgeDetails = async function (edge) {
     `;
 
     const bindsContainer = document.getElementById("binds-container");
-    bindsContainer.innerHTML = `<div style="text-align:center; padding:10px; color:#aaa;">Fetching detailed binding events...</div>`;
+    bindsContainer.innerHTML = `<div style="text-align:center; padding:10px; color:#aaa;">Loading promoter-binding motif occurrences...</div>`;
 
     try {
       const lookupSource = sourceObj.rap_id || reqSource;
       const lookupTarget = targetObj.rap_id || reqTarget;
-      const data = await window.RICE2NET_API.getBinds(lookupSource, lookupTarget);
+      const activeSources =
+        window.REGULATION_STATE && Array.isArray(window.REGULATION_STATE.sources) && window.REGULATION_STATE.sources.length > 0
+          ? window.REGULATION_STATE.sources
+          : null;
+      const data = await window.RICE2NET_API.getBinds(lookupSource, lookupTarget, activeSources);
       const binds = (data && data.binds) || [];
 
       if (binds && binds.length > 0) {
@@ -502,8 +506,8 @@ async function showNodeDetails(node) {
   if (node.shape === "diamond") iconStyle += ` transform: rotate(45deg); margin-left:5px;`;
   else iconStyle += ` border-radius:50%;`;
 
-  document.getElementById("d-id").innerHTML = `<div style="${iconStyle}"></div>${getNodeDisplayText(node)} <span style="font-size:0.8rem; color:#888;">(Loading metadata...)</span>`;
-  detailContent.innerHTML = `<div style="text-align:center; padding:20px; color:#aaa;">Fetching details from Neo4j...</div>`;
+  document.getElementById("d-id").innerHTML = `<div style="${iconStyle}"></div>${getNodeDisplayText(node)} <span style="font-size:0.8rem; color:#888;">(Loading annotations...)</span>`;
+  detailContent.innerHTML = `<div style="text-align:center; padding:20px; color:#aaa;">Loading gene annotations...</div>`;
   document.getElementById("tooltip").style.display = "none";
 
   try {
@@ -547,10 +551,24 @@ async function showNodeDetails(node) {
 
   html += `<div class="detail-row"><div class="detail-label">Type</div><div class="detail-value">${fallbackSpec.label}</div></div>`;
 
-  if (window.CLUSTERS_ENABLED && typeof CLUSTER_STATE !== "undefined" && CLUSTER_STATE.isAvailable !== false && CLUSTER_STATE.data.has(node.id)) {
-    const clusterName = CLUSTER_STATE.data.get(node.id);
-    if (CLUSTER_STATE.active.has(clusterName)) {
-        html += `<div class="detail-row"><div class="detail-label">Cluster</div><div class="detail-value">${clusterName}</div></div>`;
+  if (window.CLUSTERS_ENABLED && typeof CLUSTER_STATE !== "undefined" && CLUSTER_STATE.isAvailable !== false && CLUSTER_STATE.data.has(String(node.id))) {
+    const clusterId = CLUSTER_STATE.data.get(String(node.id));
+    if (CLUSTER_STATE.active.has(clusterId)) {
+      const cMeta =
+        (CLUSTER_STATE.byId && CLUSTER_STATE.byId.get(clusterId)) ||
+        CLUSTER_STATE.legend.find((x) => x.id === clusterId || x.name === clusterId);
+      if (cMeta) {
+        const safeClusterName = String(cMeta.name || clusterId)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+        const oraLink =
+          Array.isArray(cMeta.terms) && cMeta.terms.length > 0 && typeof window.openClusterOraModal === "function"
+            ? ` <button type="button" class="ora-small-btn" style="margin-left:8px; padding:2px 8px; font-size:0.75rem;" onclick="window.openClusterOraModal('${cMeta.id}')">ORA (${cMeta.terms.length})</button>`
+            : "";
+        html += `<div class="detail-row"><div class="detail-label">Cluster</div><div class="detail-value" style="display:flex; align-items:center;"><span style="display:inline-block; width:12px; height:12px; border-radius:2px; background:${cMeta.color}; margin-right:8px; flex-shrink:0;"></span>${safeClusterName}${oraLink}</div></div>`;
+      }
     }
   }
 
