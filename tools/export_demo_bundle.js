@@ -2,7 +2,7 @@
 /**
  * export_demo_bundle.js
  *
- * Exports a curated subnetwork JSON (default: /home/m13paiva/Downloads/thiamine_demo_net.json)
+ * Exports a curated subnetwork JSON (default: demo_data/thiamine_demo_net.json)
  * together with all linked Neo4j gene metadata, regulatory directions, and TF-promoter
  * motif binding sites into compact static JSON files under `demo_data/` for the
  * GitHub Pages zero-backend Web Demo.
@@ -22,7 +22,7 @@ require(path.join(serverNodeModules, "dotenv")).config({
 const neo4j = require(path.join(serverNodeModules, "neo4j-driver"));
 
 const inputPath =
-  process.argv[2] || "/home/m13paiva/Downloads/thiamine_demo_net.json";
+  process.argv[2] || path.join(repoRoot, "demo_data", "thiamine_demo_net.json");
 const outputDir = process.argv[3] || path.join(repoRoot, "demo_data");
 
 function toNum(val) {
