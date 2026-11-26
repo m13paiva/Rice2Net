@@ -21,10 +21,9 @@ window.reapplyColors = function () {
   }
 
   const text = document.getElementById("target-input").value;
-  const rawTargets = text
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const rawTargets = window.parseRawTargets
+    ? window.parseRawTargets(text)
+    : text.split(/[\r\n,\t]+/).map((s) => s.trim()).filter(Boolean);
 
   const targetSet = window.resolveTargetIds
     ? window.resolveTargetIds(rawTargets)
@@ -51,7 +50,15 @@ window.reapplyColors = function () {
 
   // Evaluate visual properties for each node
   nodes.forEach((n) => {
+    if (n.isDummy || String(n.id).startsWith("__dummy")) {
+      n.isTarget = false;
+      n.color = CONFIG.visuals.colors.Transparent;
+      n.fillColor = CONFIG.visuals.colors.Transparent;
+      n.strokeColor = CONFIG.visuals.colors.Transparent;
+      return;
+    }
     const deg = nodeDegrees.get(n.id) || 0;
+    n.deg = deg;
     n.isRogue = deg === 0;
 
     const baseSpec = window.getTypeVisualSpec
@@ -69,7 +76,7 @@ window.reapplyColors = function () {
     let isTargetMatched = false;
 
     // Evaluate functional cluster overlays
-    if (CLUSTER_STATE.data.has(n.id)) {
+    if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(n.id)) {
       const clusterName = CLUSTER_STATE.data.get(n.id);
       if (CLUSTER_STATE.active.has(clusterName)) {
         const cMeta = CLUSTER_STATE.legend.find((x) => x.name === clusterName);
@@ -89,7 +96,7 @@ window.reapplyColors = function () {
     if (targetState === true) targetState = 2;
     if (targetState === false) targetState = 0;
 
-    if (hasTargets && targetSet.has(n.id)) {
+    if (hasTargets && targetSet.has(String(n.id))) {
       isTargetMatched = true;
       if (targetState > 0) {
         isVisible = true;
@@ -102,6 +109,7 @@ window.reapplyColors = function () {
         finalLabel = "Target Gene";
       }
     }
+    n.isTarget = isTargetMatched;
 
     // Evaluate isolated/rogue node visibility
     let rogueState = VISIBILITY_STATE.Rogue;
@@ -109,13 +117,16 @@ window.reapplyColors = function () {
     if (rogueState === false) rogueState = 0;
 
     if (n.isRogue) {
-      if (rogueState === 0) {
+      if (isTargetMatched) {
+        isVisible = targetState > 0;
+        isHighlighted = targetState === 2;
+      } else if (rogueState === 0) {
         isVisible = false;
-      } else if (!isTargetMatched && state === 0) {
+      } else if (state === 0) {
         isVisible = false;
       } else {
         isVisible = true;
-        if (rogueState === 1 && !isTargetMatched && state !== 2) {
+        if (rogueState === 1 && state !== 2) {
           isHighlighted = false;
         }
       }
@@ -137,24 +148,30 @@ window.reapplyColors = function () {
       n.fillColor = baseSpec.hollow ? CONFIG.visuals.colors.Transparent : CONFIG.visuals.colors.Gene;
       n.strokeColor = CONFIG.visuals.colors.Gene;
     } else {
-      if (window.applyNodeTypeStyling) {
+      if (isTargetMatched) {
+        n.color = finalColor;
+        n.fillColor = finalColor;
+        n.strokeColor = finalColor;
+        n.strokeWidth = 2;
+        n.shape = baseSpec.shape || "circle";
+        n.hollow = false;
+        n.dashed = n.isRogue;
+        n.typeLabel = finalLabel;
+      } else if (window.applyNodeTypeStyling) {
         window.applyNodeTypeStyling(n, finalColor, finalLabel);
         if (n.isRogue) n.dashed = true;
-        if (isTargetMatched) {
-          n.hollow = false;
-          n.fillColor = finalColor;
-          n.strokeColor = finalColor;
-          n.strokeWidth = 2;
-        }
       } else {
         n.color = finalColor;
         n.shape = baseSpec.shape;
         n.typeLabel = finalLabel;
-        if (isTargetMatched) n.hollow = false;
       }
     }
   });
 
+  if (typeof updateVisualProps === "function") updateVisualProps();
+  if (typeof window.rebuildInteractiveQuadtree === "function") {
+    window.rebuildInteractiveQuadtree();
+  }
   window.updateTargetCounts();
   if (typeof window.updateActiveCounts === "function") window.updateActiveCounts();
   requestAnimationFrame(window.draw);
@@ -179,8 +196,9 @@ window.autoFit = function () {
   let hasVisible = false;
 
   for (const n of nodes) {
+    if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
     if (n.color === CONFIG.visuals.colors.Transparent) continue;
-    if (n.isRogue && !VISIBILITY_STATE.Rogue) continue;
+    if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
 
     hasVisible = true;
     if (n.x < minX) minX = n.x;
@@ -195,12 +213,12 @@ window.autoFit = function () {
     minY = 0;
     maxY = 1;
   }
-  const graphW = maxX - minX;
-  const graphH = maxY - minY;
+  const graphW = Math.max(maxX - minX, 300);
+  const graphH = Math.max(maxY - minY, 300);
   const midX = (minX + maxX) / 2;
   const midY = (minY + maxY) / 2;
   const padding = 0.95;
-  const scale = Math.min(width / graphW, height / graphH) * padding;
+  const scale = Math.min(Math.min(width / graphW, height / graphH) * padding, 5);
   const tx = (width + 280) / 2 - scale * midX;
   const ty = height / 2 - scale * midY;
   const t = d3.zoomIdentity.translate(tx, ty).scale(scale);

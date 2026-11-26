@@ -3,8 +3,8 @@
     <head>
         <meta charset="UTF-8" />
         <title>Rice2Net</title>
-        <script src="https://d3js.org/d3.v7.min.js"></script>
-        <link rel="stylesheet" href="style.css" />
+        <script src="vendor/d3.v7.min.js"></script>
+        <link rel="stylesheet" href="style.css?v=8" />
         <script>
             function enterApp() {
                 const overlay = document.getElementById('homepage-overlay');
@@ -50,7 +50,30 @@
                 }
             }
 
+            function revertToEmbeddedNetwork() {
+                if (typeof window.revertToEmbeddedNetworkCore === "function") {
+                    window.revertToEmbeddedNetworkCore();
+                } else if (window.__APP_CORE__ && typeof window.__APP_CORE__.main === "function") {
+                    const jsonInfo = document.getElementById('import-json-info');
+                    if (jsonInfo) jsonInfo.style.display = 'none';
+                    const edgesInfo = document.getElementById('import-edges-info');
+                    if (edgesInfo) edgesInfo.style.display = 'none';
+                    const jsonFile = document.getElementById('import-json-file');
+                    if (jsonFile) jsonFile.value = '';
+                    const edgesFile = document.getElementById('import-edges-file');
+                    if (edgesFile) edgesFile.value = '';
+                    window.IS_IMPORTED_NETWORK = false;
+                    window.IS_FILTERED_NETWORK = false;
+                    enterApp();
+                    window.__APP_CORE__.main();
+                }
+            }
+
             document.addEventListener("DOMContentLoaded", () => {
+                if (sessionStorage.getItem("skipHomepage") === "true") {
+                    sessionStorage.removeItem("skipHomepage");
+                    return;
+                }
                 showHomepage();
             });
         </script>
@@ -427,7 +450,7 @@
                             </div>
                             <div id="import-json-info" style="display: none; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 0.85rem; color: #eee; background: rgba(0,0,0,0.2); padding: 6px 10px; border-radius: 4px; border: 1px solid #444;">
                                 <span id="import-json-name" style="font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
-                                <span onclick="location.reload()" style="cursor: pointer; color: #d9534f; font-weight: bold; font-size: 1rem; padding-left: 10px;" title="Revert to DB Network">✕</span>
+                                <span onclick="revertToEmbeddedNetwork()" style="cursor: pointer; color: #d9534f; font-weight: bold; font-size: 1rem; padding-left: 10px;" title="Revert to DB Network">✕</span>
                             </div>
                         </div>
                         <div style="border-top: 1px solid #444; padding-top: 10px">
@@ -438,7 +461,7 @@
                             </div>
                             <div id="import-edges-info" style="display: none; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 0.85rem; color: #eee; background: rgba(0,0,0,0.2); padding: 6px 10px; border-radius: 4px; border: 1px solid #444;">
                                 <span id="import-edges-name" style="font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
-                                <span onclick="location.reload()" style="cursor: pointer; color: #d9534f; font-weight: bold; font-size: 1rem; padding-left: 10px;" title="Revert to DB Network">✕</span>
+                                <span onclick="revertToEmbeddedNetwork()" style="cursor: pointer; color: #d9534f; font-weight: bold; font-size: 1rem; padding-left: 10px;" title="Revert to DB Network">✕</span>
                             </div>
                         </div>
                     </div>
@@ -450,17 +473,18 @@
             </div>
         </div>
 
-        <script src="app/globals.js" defer></script>
-        <script src="app/core.js" defer></script>
-        <script src="app/data.js" defer></script>
-        <script src="app/sim.js" defer></script>
-        <script src="app/filter.js" defer></script>
-        <script src="app/kegg.js" defer></script>
-        <script src="app/controls.js" defer></script>
-        <script src="app/legends.js" defer></script>
-        <script src="app/graph.js" defer></script>
-        <script src="app/interactions.js" defer></script>
-        <script src="app/exporters.js" defer></script>
-        <script src="app/ui.js" defer></script>
+        <script src="app/globals.js?v=7" defer></script>
+        <script src="app/api.js?v=8" defer></script>
+        <script src="app/core.js?v=8" defer></script>
+        <script src="app/data.js?v=8" defer></script>
+        <script src="app/sim.js?v=4" defer></script>
+        <script src="app/filter.js?v=4" defer></script>
+        <script src="app/kegg.js?v=4" defer></script>
+        <script src="app/controls.js?v=6" defer></script>
+        <script src="app/legends.js?v=7" defer></script>
+        <script src="app/graph.js?v=7" defer></script>
+        <script src="app/interactions.js?v=7" defer></script>
+        <script src="app/exporters.js?v=7" defer></script>
+        <script src="app/ui.js?v=9" defer></script>
     </body>
 </html>

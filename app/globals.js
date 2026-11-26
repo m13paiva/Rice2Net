@@ -7,6 +7,8 @@
 
 // Seeded random number generator for reproducible force layout simulations
 let _seed = 42;
+const API_BASE = "";
+window.API_BASE = API_BASE;
 function mulberry32(a) {
   return function () {
     var t = (a += 0x6d2b79f5);
@@ -33,11 +35,14 @@ let HOVERED_EDGE = null;
 /** Primary Raw Network Topology Storage */
 let RAW_DATA = { nodes: [], links: [], adjacency: new Map() };
 
-/** Functional Cluster Annotations State */
+/** Functional Cluster Annotations State (dormant when CLUSTERS_ENABLED is false) */
+const CLUSTERS_ENABLED = false;
+window.CLUSTERS_ENABLED = CLUSTERS_ENABLED;
 let CLUSTER_STATE = {
   data: new Map(),
   active: new Set(),
   legend: [],
+  isAvailable: false,
 };
 
 /**
@@ -57,6 +62,7 @@ let VISIBILITY_STATE = {
   EdgeBoth: 0,
   EdgeReg: 0,
 };
+window.VISIBILITY_STATE = VISIBILITY_STATE;
 
 let HAS_LOADED_REGULATES = false;
 

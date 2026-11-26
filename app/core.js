@@ -29,6 +29,7 @@ window.importJSON = function (input) {
           throw new Error("Invalid JSON structure");
 
         window.IS_IMPORTED_NETWORK = true;
+        VISIBILITY_STATE.EdgeBoth = 0;
         if (typeof window.updateClusterAvailability === "function") window.updateClusterAvailability();
 
         const nameDisplay = document.getElementById('import-json-name');
@@ -43,25 +44,77 @@ window.importJSON = function (input) {
         RAW_DATA.nodes = json.nodes;
         RAW_DATA.links = json.edges;
 
-        nodes = json.nodes.map((n) => ({ ...n }));
-        const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
+        nodes = json.nodes.map((n) => {
+          const nodeObj = {
+            ...n,
+            identifier: n.identifier || (n.metadata && (n.metadata.Identifier || n.metadata.identifier)) || "",
+            symbol: n.symbol || (n.metadata && (n.metadata.Symbol || n.metadata.symbol)) || "",
+            msu_id: n.msu_id || (n.metadata && (n.metadata.MSU_ID || n.metadata.msu_id)) || "",
+            originalType: n.originalType || n.type || "Gene",
+            deg: n.deg !== undefined && n.deg !== null ? n.deg : 0,
+          };
+          if (typeof window.applyNodeTypeStyling === "function") {
+            window.applyNodeTypeStyling(nodeObj);
+          }
+          return nodeObj;
+        });
+        const nodeMap = new Map();
+        nodes.forEach((n) => {
+          nodeMap.set(String(n.id), n);
+          if (n.rap_id) nodeMap.set(String(n.rap_id), n);
+          if (n.msu_id) {
+            nodeMap.set(String(n.msu_id), n);
+            nodeMap.set(String(n.msu_id).replace(/\.\d+$/, ""), n);
+          }
+        });
 
         document.getElementById("loader-text").innerText = "LOADING JSON... 50%";
         if (progressBar) progressBar.style.width = "50%";
 
         links = json.edges
-          .map((e) => ({
-            source: nodeMap.get(String(e.source.id || e.source)),
-            target: nodeMap.get(String(e.target.id || e.target)),
-            weight: e.weight || 1,
-          }))
-          .filter((l) => l.source && l.target);
+          .map((e) => {
+            const sId = String(e.source?.id || e.source);
+            const tId = String(e.target?.id || e.target);
+            const sNode = nodeMap.get(sId);
+            const tNode = nodeMap.get(tId);
+            if (!sNode || !tNode) return null;
+
+            return {
+              source: sNode,
+              target: tNode,
+              weight:
+                e.weight !== undefined && e.weight !== null
+                  ? e.weight
+                  : e.value !== undefined && e.value !== null
+                  ? e.value
+                  : 1,
+              irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
+              sign: e.sign || null,
+              has_interacts: e.has_interacts !== false,
+              has_regulates: false,
+              directions: null,
+              reg_matched: false,
+            };
+          })
+          .filter(Boolean);
 
         await window.__APP_CORE__.hydrateMetadata();
+        RAW_DATA.nodes = nodes;
+        RAW_DATA.links = links;
+        RAW_DATA.workingNodes = nodes;
+        RAW_DATA.workingLinks = links;
+        if (typeof window.__APP_CORE__.cacheMetaSnapshot === "function") {
+          window.__APP_CORE__.cacheMetaSnapshot();
+        }
         RAW_DATA.adjacency = window.__APP_CORE__.buildAdjacency(nodes, links);
+        RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
+        RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
 
         if (loader) loader.style.display = "none";
         finishSetup(true);
+        if (typeof window.showDemoImportNotice === "function") {
+          window.showDemoImportNotice();
+        }
       } catch (err) {
         alert("Error importing JSON: " + err.message);
         loader.style.display = "none";
@@ -94,6 +147,7 @@ window.importEdges = function (input) {
       await sleep(10);
 
       window.IS_IMPORTED_NETWORK = true;
+      VISIBILITY_STATE.EdgeBoth = 0;
       if (typeof window.updateClusterAvailability === "function") window.updateClusterAvailability();
 
       const nameDisplay = document.getElementById('import-edges-name');
@@ -106,27 +160,134 @@ window.importEdges = function (input) {
       if (jsonInfo) jsonInfo.style.display = 'none';
 
       const text = e.target.result;
-      const lines = text.split(/\r?\n/);
+      const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      if (lines.length === 0) {
+        alert("No valid edges found.");
+        loader.style.display = "none";
+        return;
+      }
 
-      const newEdges = [];
+      const edgeMap = new Map();
       const nodeSet = new Set();
 
-      lines.forEach((line) => {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length < 2) return;
-        if (parts[0].toLowerCase() === "source") return;
+      let colMap = {
+        source: 0,
+        target: 1,
+        weight: 2,
+        irp: -1,
+        sign: -1,
+      };
 
-        const s = parts[0];
-        const t = parts[1];
+      const firstLine = lines[0].trim();
+      let delimiter = "\t";
+      if (firstLine.includes("\t")) {
+        delimiter = "\t";
+      } else if (firstLine.includes(",")) {
+        delimiter = ",";
+      } else {
+        delimiter = /\s+/;
+      }
+
+      const splitLine = (l) => {
+        if (delimiter === ",") {
+          return l.split(",").map(s => s.trim().replace(/^["']|["']$/g, ""));
+        } else if (delimiter === "\t") {
+          return l.split("\t").map(s => s.trim());
+        } else {
+          return l.trim().split(/\s+/);
+        }
+      };
+
+      let hasHeader = false;
+      let startIdx = 0;
+      if (lines.length > 0) {
+        const firstParts = splitLine(lines[0]).map((h) => h.toLowerCase());
+        hasHeader = firstParts.includes("source") || firstParts.includes("from") || firstParts.includes("target") || firstParts.includes("to");
+        if (hasHeader) {
+          colMap.weight = -1;
+          firstParts.forEach((h, idx) => {
+            if (h === "source" || h === "from") colMap.source = idx;
+            else if (h === "target" || h === "to") colMap.target = idx;
+            else if (h === "weight" || h === "w" || h === "val" || h === "value") colMap.weight = idx;
+            else if (h === "irp_score" || h === "irp") colMap.irp = idx;
+            else if (h === "sign") colMap.sign = idx;
+          });
+          startIdx = 1;
+        }
+      }
+
+      for (let i = startIdx; i < lines.length; i++) {
+        const parts = splitLine(lines[i]);
+        if (parts.length < 2) continue;
+
+        const s = parts[colMap.source] ? parts[colMap.source].trim() : parts[0].trim();
+        const t = parts[colMap.target] ? parts[colMap.target].trim() : parts[1].trim();
+        if (!s || !t) continue;
+
         let w = 1;
-        if (parts.length >= 3 && !isNaN(parseFloat(parts[2]))) {
-          w = parseFloat(parts[2]);
+        let irp = null;
+        let sign = null;
+
+        if (hasHeader) {
+          if (colMap.weight !== -1 && parts[colMap.weight] !== undefined) {
+            const parsedW = parseFloat(parts[colMap.weight]);
+            if (!isNaN(parsedW)) w = parsedW;
+          }
+          if (colMap.irp !== -1 && parts[colMap.irp] !== undefined) {
+            const parsedIRP = parseFloat(parts[colMap.irp]);
+            if (!isNaN(parsedIRP)) irp = parsedIRP;
+          }
+          if (colMap.sign !== -1 && parts[colMap.sign] !== undefined) {
+            const rawSign = parts[colMap.sign].trim();
+            if (rawSign === "+" || rawSign === "-" || rawSign.toLowerCase() === "positive" || rawSign.toLowerCase() === "negative" || rawSign === "+1" || rawSign === "-1") {
+              sign = (rawSign === "-" || rawSign.toLowerCase() === "negative" || rawSign === "-1") ? "-" : "+";
+            }
+          }
+        } else {
+          // No header: dynamically scan columns after target (index 2 onwards)
+          let assignedWeight = false;
+          let assignedIRP = false;
+
+          for (let col = 2; col < parts.length; col++) {
+            const p = parts[col].trim();
+            if (!p) continue;
+            const pLower = p.toLowerCase();
+
+            if (p === "+" || p === "-" || pLower === "positive" || pLower === "negative" || p === "+1" || p === "-1") {
+              sign = (p === "-" || pLower === "negative" || p === "-1") ? "-" : "+";
+            } else if (!isNaN(parseFloat(p))) {
+              const num = parseFloat(p);
+              if (!assignedWeight) {
+                w = num;
+                assignedWeight = true;
+              } else if (!assignedIRP) {
+                irp = num;
+                assignedIRP = true;
+              }
+            }
+          }
         }
 
-        newEdges.push({ source: s, target: t, weight: w });
+        const edgeKey = `${s}->${t}`;
+        if (!edgeMap.has(edgeKey)) {
+          edgeMap.set(edgeKey, {
+            source: s,
+            target: t,
+            weight: w,
+            irp: irp,
+            sign: sign,
+            has_interacts: true,
+            has_regulates: false,
+            directions: null,
+            reg_matched: false,
+          });
+        }
+
         nodeSet.add(s);
         nodeSet.add(t);
-      });
+      }
+
+      const newEdges = Array.from(edgeMap.values());
 
       if (newEdges.length === 0) {
         alert("No valid edges found.");
@@ -147,75 +308,109 @@ window.importEdges = function (input) {
           source: nodeMap.get(String(e.source)),
           target: nodeMap.get(String(e.target)),
           weight: e.weight,
+          irp: e.irp,
+          sign: e.sign,
+          has_interacts: e.has_interacts,
+          has_regulates: false,
+          directions: null,
+          reg_matched: false,
         }))
         .filter((l) => l.source && l.target);
 
+      await window.__APP_CORE__.hydrateMetadata();
       RAW_DATA.nodes = nodes;
       RAW_DATA.links = newEdges;
+      RAW_DATA.workingNodes = nodes;
+      RAW_DATA.workingLinks = links;
+      if (typeof window.__APP_CORE__.cacheMetaSnapshot === "function") {
+        window.__APP_CORE__.cacheMetaSnapshot();
+      }
       RAW_DATA.adjacency = window.__APP_CORE__.buildAdjacency(nodes, links);
-
-      await window.__APP_CORE__.hydrateMetadata();
+      RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
+      RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
       startCalculation(true);
+      if (typeof window.showDemoImportNotice === "function") {
+        window.showDemoImportNotice();
+      }
     };
     reader.readAsText(input.files[0]);
   }, 50);
 };
 
 /**
- * Calculates degrees for nodes in imported graphs.
+ * Enables drag-and-drop custom file import (.json, .tsv, .csv, .txt) onto the app canvas.
  */
-function calculateDegrees() {
-  nodes.forEach((n) => (n.deg = 0));
-  links.forEach((l) => {
-    const s =
-      typeof l.source === "object"
-        ? l.source
-        : nodes.find((n) => n.id === l.source);
-    const t =
-      typeof l.target === "object"
-        ? l.target
-        : nodes.find((n) => n.id === l.target);
-    if (s) s.deg++;
-    if (t) t.deg++;
-  });
-}
+(function initDragAndDropImport() {
+  const target = document.getElementById("container") || document.body;
+  if (!target || typeof target.addEventListener !== "function") return;
 
-/**
- * Updates visual radius dimensions for imported nodes.
- */
-function updateVisualProps() {
-  const base = parseFloat(document.getElementById("viz-base-size").value);
-  const mult = parseFloat(document.getElementById("viz-size-mult").value);
-  nodes.forEach((n) => {
-    let degVal = Math.sqrt(n.deg || 0);
-    n.r = base + degVal * mult;
-  });
-}
+  let dragDepth = 0;
+  let overlay = null;
 
-/**
- * Updates physics simulation parameters for imported graphs.
- */
-function updatePhysicsParams() {
-  const rep = -parseInt(document.getElementById("phys-repulsion").value);
-  const dist = parseInt(document.getElementById("phys-link-dist").value);
-  const colMult = parseFloat(document.getElementById("phys-collision").value);
-  const radStr = parseFloat(document.getElementById("phys-radial").value);
-  if (simulation) {
-    simulation
-      .force("charge")
-      .strength((d) => (!d.deg || d.deg <= 1 ? -1 : rep));
-    simulation.force("link").distance(dist);
-    simulation
-      .force("radial")
-      .x(width / 2)
-      .y(height / 2)
-      .strength(radStr);
-    simulation.force("collide").radius((d) => d.r * colMult);
+  function ensureOverlay() {
+    if (overlay) return overlay;
+    overlay = document.createElement("div");
+    overlay.id = "drop-import-overlay";
+    overlay.innerHTML = `<div class="drop-import-card">Drop <code>.json</code> layout or <code>.tsv</code> / <code>.csv</code> / <code>.txt</code> edge table to import</div>`;
+    target.appendChild(overlay);
+    return overlay;
   }
-}
+
+  function hasFiles(e) {
+    return (
+      e.dataTransfer &&
+      e.dataTransfer.types &&
+      Array.from(e.dataTransfer.types).includes("Files")
+    );
+  }
+
+  target.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    ensureOverlay().style.display = "flex";
+  });
+
+  target.addEventListener("dragover", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+
+  target.addEventListener("dragleave", (e) => {
+    if (!hasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0 && overlay) overlay.style.display = "none";
+  });
+
+  target.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    if (overlay) overlay.style.display = "none";
+
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || !files.length) return;
+    const file = files[0];
+    const name = String(file.name || "").toLowerCase();
+
+    if (name.endsWith(".json")) {
+      window.importJSON({ files: [file] });
+    } else if (
+      name.endsWith(".tsv") ||
+      name.endsWith(".csv") ||
+      name.endsWith(".txt")
+    ) {
+      window.importEdges({ files: [file] });
+    } else {
+      alert("Unsupported file format. Drop a .json layout or .tsv/.csv/.txt edge file.");
+    }
+  });
+})();
 
 /**
  * Runs localized D3 force simulation for a subset of affected node IDs.
+ * Delegates degree, visual, and physics updates to sim.js helpers.
  * @param {Array<string>} affectedIds - Node IDs allowed to move.
  */
 window.runLocalPhysics = function (affectedIds) {
@@ -233,9 +428,9 @@ window.runLocalPhysics = function (affectedIds) {
     }
   });
 
-  calculateDegrees();
-  updateVisualProps();
-  updatePhysicsParams();
+  if (typeof calculateDegrees === "function") calculateDegrees();
+  if (typeof updateVisualProps === "function") updateVisualProps();
+  if (typeof updatePhysicsParams === "function") updatePhysicsParams();
 
   simulation.nodes(nodes);
   simulation.force("link").links(links);
@@ -253,254 +448,9 @@ window.runLocalPhysics = function (affectedIds) {
     simulation.on("end", null);
 
     if (typeof d3 !== "undefined") {
-        quadtree = d3.quadtree().x((d) => d.x).y((d) => d.y).addAll(nodes);
+      quadtree = d3.quadtree().x((d) => d.x).y((d) => d.y).addAll(nodes);
     }
   });
 
   simulation.alpha(0.5).restart();
 };
-
-/**
- * Runs layout calculation for imported graph topologies.
- * @param {boolean} resetParams - Reset parameters flag.
- */
-function startCalculation(resetParams = true) {
-  rng = mulberry32(_seed);
-  nodes.forEach((n) => {
-    if (n.x === undefined) n.x = random() * width;
-    if (n.y === undefined) n.y = random() * height;
-    n.vx = 0;
-    n.vy = 0;
-  });
-
-  const loader = document.getElementById("loader");
-  const loaderText = document.getElementById("loader-text");
-  const progressBar = document.getElementById("progress-bar");
-
-  loader.style.display = "block";
-  if (loaderText) loaderText.innerText = "CALCULATING LAYOUT... 0%";
-  if (progressBar) progressBar.style.width = "0%";
-
-  if (simulation) simulation.stop();
-
-  if (resetParams) {
-    if (nodes.length > PERFORMANCE_LIMIT) {
-      document.getElementById("phys-radial").value = "0.05";
-      document.getElementById("phys-repulsion").value = "50";
-      document.getElementById("viz-base-size").value = "0.5";
-      document.getElementById("viz-size-mult").value = "0.8";
-      document.getElementById("viz-edge-width").value = "0.1";
-      document.getElementById("viz-edge-alpha").value = "0.15";
-    } else {
-      document.getElementById("phys-radial").value = "0.1";
-      document.getElementById("phys-repulsion").value = "300";
-      document.getElementById("viz-base-size").value = "2";
-      document.getElementById("viz-size-mult").value = "2.5";
-      document.getElementById("viz-edge-width").value = "0.3";
-      document.getElementById("viz-edge-alpha").value = "0.5";
-    }
-  }
-
-  calculateDegrees();
-  updateVisualProps();
-  updatePhysicsParams();
-
-  simulation = d3
-    .forceSimulation(nodes)
-    .force("charge", d3.forceManyBody())
-    .force(
-      "link",
-      d3.forceLink(links).id((d) => d.id),
-    )
-    .force("collide", d3.forceCollide())
-    .force("radial", d3.forceRadial(0, width / 2, height / 2));
-
-  updatePhysicsParams();
-
-  ticksDone = 0;
-  function step() {
-    for (let i = 0; i < ticksPerFrame; i++) {
-      simulation.tick();
-      ticksDone++;
-    }
-    const pct = Math.min(100, (ticksDone / totalTicks) * 100);
-    if (progressBar) progressBar.style.width = pct + "%";
-    if (loaderText) loaderText.innerText = `CALCULATING LAYOUT... ${Math.round(pct)}%`;
-
-    if (ticksDone < totalTicks) requestAnimationFrame(step);
-    else {
-      simulation.stop();
-      loader.style.display = "none";
-      quadtree = d3
-        .quadtree()
-        .x((d) => d.x)
-        .y((d) => d.y)
-        .addAll(nodes);
-      window.autoFit && window.autoFit();
-      finishSetup(resetParams);
-    }
-  }
-  step();
-}
-
-/**
- * Fallback drawing routine for imported networks.
- */
-window.draw = function () {
-  ctx.save();
-  ctx.fillStyle = THEME === "dark" ? "#1a1a1a" : "#ffffff";
-  ctx.fillRect(0, 0, width, height);
-  ctx.translate(transform.x, transform.y);
-  ctx.scale(transform.k, transform.k);
-
-  const isHeavy = nodes.length > PERFORMANCE_LIMIT;
-  const simplify = CURRENT_MODE === "pan" && isHeavy && isInteracting;
-
-  if (!simplify) {
-    const edgeW = parseFloat(document.getElementById("viz-edge-width").value);
-    const edgeA = parseFloat(document.getElementById("viz-edge-alpha").value);
-    const finalAlpha = THEME === "light" ? Math.min(1.0, edgeA * 2.0) : edgeA;
-
-    ctx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, ${finalAlpha})`;
-    ctx.fillStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, ${finalAlpha})`;
-    ctx.lineWidth = Math.max(edgeW / transform.k, edgeW);
-
-    const arrowSize = Math.max(6 / transform.k, 6);
-    const offsetDist = 6 / transform.k;
-
-    links.forEach((l) => {
-      if (!l.source.x || !l.target.x) return;
-
-      const validDirections = (l.has_regulates && Array.isArray(l.directions)) ? l.directions : [];
-      const isBidirectional = validDirections.length > 1;
-
-      if (!isBidirectional) {
-        ctx.beginPath();
-        ctx.moveTo(l.source.x, l.source.y);
-        ctx.lineTo(l.target.x, l.target.y);
-        ctx.stroke();
-      }
-
-      validDirections.forEach(dir => {
-        let srcNode, tgtNode;
-
-        if (String(l.source.id) === dir.src && String(l.target.id) === dir.tgt) {
-          srcNode = l.source;
-          tgtNode = l.target;
-        } else if (String(l.target.id) === dir.src && String(l.source.id) === dir.tgt) {
-          srcNode = l.target;
-          tgtNode = l.source;
-        } else {
-          return;
-        }
-
-        let lineStartX = srcNode.x, lineStartY = srcNode.y;
-        let lineEndX = tgtNode.x, lineEndY = tgtNode.y;
-        const tgtR = tgtNode.r || 2;
-
-        const dx = lineEndX - lineStartX;
-        const dy = lineEndY - lineStartY;
-        const len = Math.sqrt(dx * dx + dy * dy);
-        if (len === 0) return;
-
-        if (isBidirectional) {
-          const nx = (-dy / len) * offsetDist;
-          const ny = (dx / len) * offsetDist;
-          lineStartX += nx; lineStartY += ny;
-          lineEndX += nx; lineEndY += ny;
-
-          ctx.beginPath();
-          ctx.moveTo(lineStartX, lineStartY);
-          ctx.lineTo(lineEndX, lineEndY);
-          ctx.stroke();
-        }
-
-        const angle = Math.atan2(lineEndY - lineStartY, lineEndX - lineStartX);
-        const targetEdgeX = lineEndX - tgtR * Math.cos(angle);
-        const targetEdgeY = lineEndY - tgtR * Math.sin(angle);
-
-        ctx.beginPath();
-        ctx.moveTo(targetEdgeX, targetEdgeY);
-        ctx.lineTo(targetEdgeX - arrowSize * Math.cos(angle - Math.PI / 6), targetEdgeY - arrowSize * Math.sin(angle - Math.PI / 6));
-        ctx.lineTo(targetEdgeX - arrowSize * Math.cos(angle + Math.PI / 6), targetEdgeY - arrowSize * Math.sin(angle + Math.PI / 6));
-        ctx.closePath();
-        ctx.fill();
-      });
-    });
-  }
-
-  if (simplify) {
-    for (const n of nodes) {
-      if (n.color === CONFIG.visuals.colors.Transparent) continue;
-      ctx.fillStyle = n.color;
-      ctx.fillRect(n.x - n.r, n.y - n.r, n.r * 2, n.r * 2);
-    }
-  } else {
-    for (const n of nodes) {
-      if (n.color === CONFIG.visuals.colors.Transparent) continue;
-
-      ctx.fillStyle = n.fillColor || n.color;
-      ctx.strokeStyle = n.strokeColor || "#000";
-      ctx.lineWidth = n.strokeWidth || (1 / transform.k);
-
-      if (n.dashed) {
-         ctx.setLineDash([3 / transform.k, 3 / transform.k]);
-      } else {
-         ctx.setLineDash([]);
-      }
-
-      ctx.beginPath();
-      if (n.shape === "diamond") {
-        const r = n.r * 1.2;
-        ctx.moveTo(n.x, n.y - r);
-        ctx.lineTo(n.x + r, n.y);
-        ctx.lineTo(n.x, n.y + r);
-        ctx.lineTo(n.x - r, n.y);
-        ctx.closePath();
-      } else {
-        ctx.arc(n.x, n.y, n.r, 0, 2 * Math.PI);
-      }
-
-      if (!n.hollow) ctx.fill();
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-  }
-  ctx.restore();
-};
-
-/**
- * Finalizes post-calculation setup for imported graph views.
- * @param {boolean} resetParams - Reset parameters flag.
- */
-function finishSetup(resetParams) {
-  document.getElementById("val-nodes").innerText =
-    nodes.length.toLocaleString();
-  document.getElementById("val-edges").innerText =
-    links.length.toLocaleString();
-
-  if (resetParams && nodes.length > PERFORMANCE_LIMIT) {
-    document.getElementById("phys-radial").value = "0.05";
-    document.getElementById("phys-repulsion").value = "50";
-    document.getElementById("viz-base-size").value = "0.5";
-    document.getElementById("viz-size-mult").value = "0.8";
-    document.getElementById("viz-edge-width").value = "0.1";
-    document.getElementById("viz-edge-alpha").value = "0.15";
-  }
-
-  calculateDegrees();
-  updateVisualProps();
-  updatePhysicsParams();
-
-  quadtree = d3
-    .quadtree()
-    .x((d) => d.x)
-    .y((d) => d.y)
-    .addAll(nodes);
-
-  if (typeof window.setMode === "function") window.setMode("pan");
-  if (typeof window.highlightCurrentView === "function")
-    window.highlightCurrentView();
-
-  setTimeout(() => window.autoFit && window.autoFit(), 100);
-}

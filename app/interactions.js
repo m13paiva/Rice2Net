@@ -7,37 +7,47 @@
 
 /**
  * Finds the closest visible edge near the target canvas coordinates.
+ * Uses an allocation-free AABB-first scan so even 885k+ edge graphs resolve in a few milliseconds
+ * without missing long edges whose endpoints lie outside the current viewport.
  * @param {number} wx - World X coordinate.
  * @param {number} wy - World Y coordinate.
  * @param {number} threshold - Hit test distance threshold.
  * @returns {Object|null} Closest hovered edge or null.
  */
 function getHoveredEdge(wx, wy, threshold) {
+  if (!links || links.length === 0) return null;
+
   let closestEdge = null;
   let minDistSq = threshold * threshold;
 
   const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
+  const hasCustomVisibility = typeof window.isEdgeVisible === "function";
+  const transparentColor = CONFIG.visuals.colors.Transparent;
+  const showRogue = !!VISIBILITY_STATE.Rogue;
+
+  const margin = threshold + 10;
+  const wxMin = wx - margin;
+  const wxMax = wx + margin;
+  const wyMin = wy - margin;
+  const wyMax = wy + margin;
 
   for (let i = 0; i < links.length; i++) {
     const l = links[i];
-    const isVisible = window.isEdgeVisible ? window.isEdgeVisible(l) : true;
-    if (!isVisible) continue;
+    const s = l.source;
+    const t = l.target;
+    if (!s || !t) continue;
 
-    if (!l.source.x || !l.target.x) continue;
-    if (l.source.color === CONFIG.visuals.colors.Transparent || l.target.color === CONFIG.visuals.colors.Transparent) continue;
-    if (l.source.isRogue && !VISIBILITY_STATE.Rogue) continue;
-    if (l.target.isRogue && !VISIBILITY_STATE.Rogue) continue;
+    const sx = s.x, sy = s.y;
+    const tx = t.x, ty = t.y;
+    if (sx == null || sy == null || tx == null || ty == null) continue;
 
-    const sx = l.source.x, sy = l.source.y;
-    const tx = l.target.x, ty = l.target.y;
+    // Fast branch-only AABB rejection before visibility/distance checks
+    if ((sx < wxMin && tx < wxMin) || (sx > wxMax && tx > wxMax)) continue;
+    if ((sy < wyMin && ty < wyMin) || (sy > wyMax && ty > wyMax)) continue;
 
-    const minBoundX = Math.min(sx, tx) - threshold - 10;
-    const maxBoundX = Math.max(sx, tx) + threshold + 10;
-    if (wx < minBoundX || wx > maxBoundX) continue;
-
-    const minBoundY = Math.min(sy, ty) - threshold - 10;
-    const maxBoundY = Math.max(sy, ty) + threshold + 10;
-    if (wy < minBoundY || wy > maxBoundY) continue;
+    if (s.color === transparentColor || t.color === transparentColor) continue;
+    if ((s.isRogue || t.isRogue) && !showRogue) continue;
+    if (hasCustomVisibility && !window.isEdgeVisible(l)) continue;
 
     const l2 = (sx - tx) ** 2 + (sy - ty) ** 2;
     let dSq = Infinity;
@@ -82,9 +92,9 @@ function getHoveredEdge(wx, wy, threshold) {
         if (l2 === 0) {
             dSq = (wx - sx) ** 2 + (wy - sy) ** 2;
         } else {
-            let t = ((wx - sx) * (tx - sx) + (wy - sy) * (ty - sy)) / l2;
-            t = Math.max(0, Math.min(1, t));
-            dSq = (wx - (sx + t * (tx - sx))) ** 2 + (wy - (sy + t * (ty - sy))) ** 2;
+            let tProj = ((wx - sx) * (tx - sx) + (wy - sy) * (ty - sy)) / l2;
+            tProj = Math.max(0, Math.min(1, tProj));
+            dSq = (wx - (sx + tProj * (tx - sx))) ** 2 + (wy - (sy + tProj * (ty - sy))) ** 2;
         }
 
         if (isThisRegActive && l.directions.length === 1) {
@@ -118,9 +128,15 @@ function onMouseMoveSelect(event) {
   clearTimeout(edgeHoverTimer);
   const tooltip = document.getElementById("tooltip");
   const node = quadtree.find(wx, wy, 10 / transform.k + 5);
+  const isInteractiveNode =
+    node &&
+    (typeof window.isNodeInteractive === "function"
+      ? window.isNodeInteractive(node)
+      : node.color !== CONFIG.visuals.colors.Transparent &&
+        (!node.isRogue || VISIBILITY_STATE.Rogue || node.isTarget));
   let needsRedraw = false;
 
-  if (node && node.color !== CONFIG.visuals.colors.Transparent) {
+  if (isInteractiveNode) {
     if (typeof HOVERED_EDGE !== "undefined" && HOVERED_EDGE !== null) {
       HOVERED_EDGE = null;
       needsRedraw = true;
@@ -159,6 +175,9 @@ function onMouseMoveSelect(event) {
         if (isRegActive && edge.has_regulates && edge.clicked_src && edge.clicked_tgt) {
             ttext = `${edge.clicked_src} &rarr; ${edge.clicked_tgt}`;
         }
+        if (edge.sign) {
+          ttext += ` [${edge.sign}]`;
+        }
 
         canvas.classList.add("hovering");
         tooltip.style.display = "flex";
@@ -186,12 +205,12 @@ function onMouseMoveSelect(event) {
  * @returns {string} Formatted node display string.
  */
 function getNodeDisplayText(node) {
-  const identifier = (node && (node.identifier || (node.metadata && node.metadata.identifier)));
-  if (identifier && identifier.trim() !== "" && identifier !== ".") return identifier;
+  const identifier = node && (node.identifier || (node.metadata && (node.metadata.Identifier || node.metadata.identifier)));
+  if (identifier && identifier.trim() !== "" && identifier !== "." && identifier !== "-" && identifier.toLowerCase() !== "null") return identifier;
 
-  const rawSymbol = (node && (node.symbol || (node.metadata && node.metadata.symbol))) || "";
+  const rawSymbol = (node && (node.symbol || (node.metadata && (node.metadata.Symbol || node.metadata.symbol)))) || "";
   const symbol = String(rawSymbol).trim();
-  if (!symbol || symbol === "." || symbol === node.id) return node.id;
+  if (!symbol || symbol === "." || symbol === "-" || symbol === node.id || symbol.toLowerCase() === "null") return node.id;
   return `${symbol} (${node.id})`;
 }
 
@@ -205,12 +224,23 @@ function onClickSelect(event) {
   const wx = (mx - transform.x) / transform.k;
   const wy = (my - transform.y) / transform.k;
   const node = quadtree.find(wx, wy, 10 / transform.k + 5);
+  const isInteractiveNode =
+    node &&
+    (typeof window.isNodeInteractive === "function"
+      ? window.isNodeInteractive(node)
+      : node.color !== CONFIG.visuals.colors.Transparent &&
+        (!node.isRogue || VISIBILITY_STATE.Rogue || node.isTarget));
 
-  if (node && node.color !== CONFIG.visuals.colors.Transparent) {
+  if (isInteractiveNode) {
     showNodeDetails(node);
   } else {
     const edgeThreshold = 10 / transform.k + 5;
-    const edge = getHoveredEdge(wx, wy, edgeThreshold);
+    const edge =
+      (typeof HOVERED_EDGE !== "undefined" &&
+        HOVERED_EDGE &&
+        (!window.isEdgeVisible || window.isEdgeVisible(HOVERED_EDGE)) &&
+        HOVERED_EDGE) ||
+      getHoveredEdge(wx, wy, edgeThreshold);
     if (edge) showEdgeDetails(edge);
   }
 }
@@ -306,11 +336,15 @@ window.showEdgeDetails = async function (edge) {
 
   const weight = edge.weight !== undefined ? edge.weight : "1";
   const irp = edge.irp !== undefined && edge.irp !== null ? edge.irp : "-";
+  const signRow = edge.sign
+    ? `<div class="detail-row"><div class="detail-label">Sign</div><div class="detail-value">${edge.sign === "+" ? "+ (Positive)" : edge.sign === "-" ? "- (Negative)" : edge.sign}</div></div>`
+    : "";
 
   if (isThisRegActive) {
     detailContent.innerHTML = `
       <div class="detail-row" style="margin-top: 15px;"><div class="detail-label">Weight</div><div class="detail-value">${weight}</div></div>
       <div class="detail-row"><div class="detail-label">IRP Score</div><div class="detail-value">${irp}</div></div>
+      ${signRow}
       <div id="binds-container" style="margin-top: 15px;"></div>
     `;
 
@@ -318,10 +352,10 @@ window.showEdgeDetails = async function (edge) {
     bindsContainer.innerHTML = `<div style="text-align:center; padding:10px; color:#aaa;">Fetching detailed binding events...</div>`;
 
     try {
-      const response = await fetch(`/api/network/edges/binds?source=${encodeURIComponent(reqSource)}&target=${encodeURIComponent(reqTarget)}`);
-
-      if (!response.ok) throw new Error("Failed to fetch binds");
-      const { binds } = await response.json();
+      const lookupSource = sourceObj.rap_id || reqSource;
+      const lookupTarget = targetObj.rap_id || reqTarget;
+      const data = await window.RICE2NET_API.getBinds(lookupSource, lookupTarget);
+      const binds = (data && data.binds) || [];
 
       if (binds && binds.length > 0) {
 
@@ -445,6 +479,7 @@ window.showEdgeDetails = async function (edge) {
     detailContent.innerHTML = `
       <div class="detail-row" style="margin-top: 15px;"><div class="detail-label">Weight</div><div class="detail-value">${weight}</div></div>
       <div class="detail-row"><div class="detail-label">IRP Score</div><div class="detail-value">${irp}</div></div>
+      ${signRow}
     `;
   }
 };
@@ -472,13 +507,15 @@ async function showNodeDetails(node) {
   document.getElementById("tooltip").style.display = "none";
 
   try {
-    const response = await fetch(`/api/network/node/${encodeURIComponent(node.id)}`);
-    if (response.ok) {
-      const dbData = await response.json();
+    const dbData = await window.RICE2NET_API.getNodeMetadata(node.rap_id || node.id);
+    if (dbData) {
       if (!node.metadata) node.metadata = {};
-      node.metadata["RAP_ID"] = node.id;
+      node.metadata["RAP_ID"] = dbData.id || node.rap_id || node.id;
       if (dbData.msu_id) node.metadata["MSU_ID"] = dbData.msu_id;
-      if (dbData.identifier) node.identifier = dbData.identifier;
+      if (dbData.identifier) {
+        node.identifier = dbData.identifier;
+        node.metadata["Identifier"] = dbData.identifier;
+      }
       if (dbData.kegg_gene) node.kegg_gene = dbData.kegg_gene;
       if (dbData.full_name) node.metadata["Description"] = dbData.full_name;
 
@@ -510,11 +547,16 @@ async function showNodeDetails(node) {
 
   html += `<div class="detail-row"><div class="detail-label">Type</div><div class="detail-value">${fallbackSpec.label}</div></div>`;
 
-  if (typeof CLUSTER_STATE !== "undefined" && CLUSTER_STATE.isAvailable !== false && CLUSTER_STATE.data.has(node.id)) {
+  if (window.CLUSTERS_ENABLED && typeof CLUSTER_STATE !== "undefined" && CLUSTER_STATE.isAvailable !== false && CLUSTER_STATE.data.has(node.id)) {
     const clusterName = CLUSTER_STATE.data.get(node.id);
     if (CLUSTER_STATE.active.has(clusterName)) {
         html += `<div class="detail-row"><div class="detail-label">Cluster</div><div class="detail-value">${clusterName}</div></div>`;
     }
+  }
+
+  const geneIdentifier = node.identifier || (node.metadata && (node.metadata["Identifier"] || node.metadata["identifier"])) || "-";
+  if (geneIdentifier !== "-" && geneIdentifier !== node.id) {
+    html += `<div class="detail-row"><div class="detail-label">Identifier</div><div class="detail-value">${geneIdentifier}</div></div>`;
   }
 
   const msuId = node.msu_id || (node.metadata && node.metadata["MSU_ID"]) || "-";
@@ -539,30 +581,42 @@ async function showNodeDetails(node) {
     }
   }
 
-  const neighbors = RAW_DATA.adjacency.get(node.id) || [];
+  const neighbors = RAW_DATA.adjacency.get(String(node.id)) || [];
   if (neighbors.length > 0) {
+    const nodeById = new Map();
+    for (let i = 0; i < nodes.length; i++) {
+      nodeById.set(String(nodes[i].id), nodes[i]);
+    }
+    const hasAnySign = neighbors.some((entry) => {
+      const edge = links[entry.idx];
+      return edge && edge.sign;
+    });
     html += `
       <details style="margin-top:10px; border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px;">
         <summary style="font-size:0.9rem; margin-bottom:5px; color:#bbb; cursor:pointer; outline:none;">CONNECTIONS (${node.deg || 0})</summary>
         <div style="max-height:150px; overflow-y:auto; border:1px solid #333; border-radius:4px; background:rgba(0,0,0,0.2);">
           <table style="width:100%; border-collapse:collapse; font-size:0.85rem; color:#eee;">
-            <thead><tr style="border-bottom:1px solid #555; background:rgba(255,255,255,0.05);"><th style="text-align:left; padding:4px;">Node</th><th style="text-align:right; padding:4px;">Wgt</th><th style="text-align:right; padding:4px;">IRP</th></tr></thead>
+            <thead><tr style="border-bottom:1px solid #555; background:rgba(255,255,255,0.05);"><th style="text-align:left; padding:4px;">Node</th><th style="text-align:right; padding:4px;">Wgt</th><th style="text-align:right; padding:4px;">IRP</th>${hasAnySign ? '<th style="text-align:center; padding:4px;">Sign</th>' : ''}</tr></thead>
             <tbody>`;
     neighbors.forEach((entry) => {
-      const neighbor = nodes.find((n) => n.id === entry.n);
+      const neighbor = nodeById.get(String(entry.n));
       if (!neighbor) return;
       const neighborBg = neighbor.hollow ? "transparent" : neighbor.fillColor || neighbor.color;
       let iconStyle2 = `display:inline-block; width:10px; height:10px; margin-right:6px; background-color:${neighborBg}; border:1px ${neighbor.dashed ? "dashed" : "solid"} ${neighbor.strokeColor || neighbor.color}; box-sizing:border-box;`;
       if (neighbor.shape === "diamond") iconStyle2 += ` transform: rotate(45deg); margin-left:2px; margin-right:8px;`;
       else iconStyle2 += ` border-radius:50%;`;
       const edge = links[entry.idx];
-      const weight = edge ? edge.weight || edge.value || edge.w || "1" : "1";
+      const weight = edge && edge.weight !== undefined && edge.weight !== null ? edge.weight : (edge ? edge.value || edge.w || "1" : "1");
       const irp = edge && edge.irp !== undefined && edge.irp !== null ? edge.irp : "-";
+      const signCell = hasAnySign
+        ? `<td style="padding:6px 4px; text-align:center; opacity:0.85;">${edge && edge.sign ? edge.sign : "-"}</td>`
+        : "";
       html += `
         <tr style="border-bottom:1px solid #333; cursor:pointer;" onclick="window.selectNode('${neighbor.id}')" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
           <td style="padding:6px 4px;"><div style="${iconStyle2}"></div><span style="font-family:monospace;">${neighbor.id}</span></td>
           <td style="padding:6px 4px; text-align:right; opacity:0.7;">${weight}</td>
           <td style="padding:6px 4px; text-align:right; opacity:0.7;">${irp}</td>
+          ${signCell}
         </tr>`;
     });
     html += `</tbody></table></div></details>`;
@@ -691,40 +745,36 @@ canvas.addEventListener('contextmenu', (e) => {
     const wy = (my - transform.y) / transform.k;
     const node = quadtree.find(wx, wy, 10 / transform.k + 5);
 
-    if (node && node.color !== CONFIG.visuals.colors.Transparent && (!node.isRogue || VISIBILITY_STATE.Rogue)) {
-
-        const uniqueNeighbors = new Map();
-        nodes.forEach(n => uniqueNeighbors.set(String(n.id), new Set()));
-        links.forEach(l => {
-            const s = String(l.source.id || l.source);
-            const t = String(l.target.id || l.target);
-            if (s !== t) {
-                if (uniqueNeighbors.has(s)) uniqueNeighbors.get(s).add(t);
-                if (uniqueNeighbors.has(t)) uniqueNeighbors.get(t).add(s);
-            }
-        });
-
+    if (node && node.color !== CONFIG.visuals.colors.Transparent && (!node.isRogue || VISIBILITY_STATE.Rogue || node.isTarget)) {
         const myId = String(node.id);
-        const myNeighbors = uniqueNeighbors.get(myId) || new Set();
+        const curAdj = RAW_DATA && RAW_DATA.adjacency ? RAW_DATA.adjacency : null;
 
+        const getUniqueNeighbors = (adjMap, id) => {
+            const set = new Set();
+            const entries = adjMap ? adjMap.get(id) : null;
+            if (entries) {
+                for (let i = 0; i < entries.length; i++) {
+                    if (entries[i].n !== id) set.add(entries[i].n);
+                }
+            }
+            return set;
+        };
+
+        const myNeighbors = getUniqueNeighbors(curAdj, myId);
         const isLeaf = myNeighbors.size <= 1;
 
         let hasRemovableLeaves = false;
-        myNeighbors.forEach(neighborId => {
-            if (uniqueNeighbors.get(neighborId)?.size === 1) {
+        myNeighbors.forEach((neighborId) => {
+            if (!hasRemovableLeaves && getUniqueNeighbors(curAdj, neighborId).size === 1) {
                 hasRemovableLeaves = true;
             }
         });
 
-        const fullNeighbors = new Set();
-        if (RAW_DATA && RAW_DATA.links) {
-            RAW_DATA.links.forEach(l => {
-                const s = String(l.source.id || l.source);
-                const t = String(l.target.id || l.target);
-                if (s === myId && t !== myId) fullNeighbors.add(t);
-                if (t === myId && s !== myId) fullNeighbors.add(s);
-            });
-        }
+        const fullAdj =
+            window.__APP_CORE__ && typeof window.__APP_CORE__.getFullAdjacency === "function"
+                ? window.__APP_CORE__.getFullAdjacency()
+                : curAdj;
+        const fullNeighbors = getUniqueNeighbors(fullAdj, myId);
 
         const canExpand = fullNeighbors.size > myNeighbors.size;
 

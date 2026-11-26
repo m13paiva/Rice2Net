@@ -176,6 +176,49 @@ body {
     margin-bottom: 8px;
 }
 
+.homepage-wrapper .readme-content .info-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 18px 0;
+    background-color: #ffffff;
+    border: 1px solid #e1e4e8;
+    border-radius: 6px;
+    font-size: 1rem;
+    text-align: left;
+}
+
+.homepage-wrapper .readme-content .info-table th,
+.homepage-wrapper .readme-content .info-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #e1e4e8;
+    color: #333333;
+}
+
+.homepage-wrapper .readme-content .info-table thead th {
+    background-color: #eef2f6;
+    color: #2c3e50;
+    font-weight: 600;
+}
+
+.homepage-wrapper .readme-content .info-table tr:last-child td {
+    border-bottom: none;
+}
+
+.homepage-wrapper .readme-content .info-table .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.homepage-wrapper .readme-content .info-note {
+    background-color: #eef5fc;
+    border-left: 4px solid #2a5298;
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin: 10px 0 15px 0;
+    color: #2c3e50;
+    font-size: 1rem;
+}
+
 /* Footer Styles */
 .homepage-wrapper footer {
     min-height: 120px;

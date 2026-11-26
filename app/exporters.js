@@ -13,13 +13,13 @@
  * @returns {boolean} True if visible for export.
  */
 function isNodeVisibleForExport(node, targetSet = null) {
-  if (!node) return false;
-  if (node.isRogue && !VISIBILITY_STATE.Rogue) return false;
+  if (!node || node.isDummy || String(node.id).startsWith("__dummy")) return false;
+  if (node.isRogue && !VISIBILITY_STATE.Rogue && !node.isTarget) return false;
 
   const baseSpec = window.getTypeVisualSpec ? window.getTypeVisualSpec(node.originalType || "Gene") : { visibilityKey: "Gene" };
   if (VISIBILITY_STATE[baseSpec.visibilityKey] > 0) return true;
 
-  if (CLUSTER_STATE.data.has(node.id)) {
+  if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(node.id)) {
     const clusterName = CLUSTER_STATE.data.get(node.id);
     if (CLUSTER_STATE.active.has(clusterName)) return true;
   }
@@ -129,30 +129,35 @@ window.exportTSV = function () {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
 
     const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
-    const rows = ["Source\tTarget\tWeight\tIRP_score\tDirectional"];
+    const rows = ["Source\tTarget\tWeight\tIRP_score\tDirectional\tSign"];
+    const nodeById = new Map();
+    for (let i = 0; i < nodes.length; i++) {
+      nodeById.set(String(nodes[i].id), nodes[i]);
+    }
     let exportedCount = 0;
 
     links.forEach((l) => {
       if (window.isEdgeVisible && !window.isEdgeVisible(l)) return;
 
-      const sId = l.source?.id || l.source;
-      const tId = l.target?.id || l.target;
-      const sNode = typeof l.source === "object" ? l.source : nodes.find((n) => n.id === sId);
-      const tNode = typeof l.target === "object" ? l.target : nodes.find((n) => n.id === tId);
+      const sId = String(l.source?.id || l.source);
+      const tId = String(l.target?.id || l.target);
+      const sNode = typeof l.source === "object" ? l.source : nodeById.get(sId);
+      const tNode = typeof l.target === "object" ? l.target : nodeById.get(tId);
 
       if (!sNode || !tNode) return;
-      if ((sNode.isRogue && !VISIBILITY_STATE.Rogue) || sNode.color === CONFIG.visuals.colors.Transparent) return;
-      if ((tNode.isRogue && !VISIBILITY_STATE.Rogue) || tNode.color === CONFIG.visuals.colors.Transparent) return;
+      if ((sNode.isRogue && !VISIBILITY_STATE.Rogue && !sNode.isTarget) || sNode.color === CONFIG.visuals.colors.Transparent) return;
+      if ((tNode.isRogue && !VISIBILITY_STATE.Rogue && !tNode.isTarget) || tNode.color === CONFIG.visuals.colors.Transparent) return;
 
-      const weight = l.weight !== undefined ? l.weight : l.value || l.w || "1";
+      const weight = l.weight !== undefined && l.weight !== null ? l.weight : (l.value || l.w || "1");
       const irpVal = l.irp !== undefined && l.irp !== null ? l.irp : "";
+      const signVal = l.sign || "";
 
       const isDirectional = isRegActive && !!l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0;
 
       if (isDirectional) {
         l.directions.forEach((dir) => {
-          const dirSrcNode = nodes.find(n => n.id === dir.src);
-          const dirTgtNode = nodes.find(n => n.id === dir.tgt);
+          const dirSrcNode = nodeById.get(String(dir.src));
+          const dirTgtNode = nodeById.get(String(dir.tgt));
 
           if (!dirSrcNode || !dirTgtNode) return;
 
@@ -161,7 +166,7 @@ window.exportTSV = function () {
 
           if (!sOut || !tOut) return;
 
-          rows.push(`${sOut}\t${tOut}\t${weight}\t${irpVal}\ttrue`);
+          rows.push(`${sOut}\t${tOut}\t${weight}\t${irpVal}\ttrue\t${signVal}`);
           exportedCount++;
         });
       } else {
@@ -170,7 +175,7 @@ window.exportTSV = function () {
 
         if (!sOut || !tOut) return;
 
-        rows.push(`${sOut}\t${tOut}\t${weight}\t${irpVal}\tfalse`);
+        rows.push(`${sOut}\t${tOut}\t${weight}\t${irpVal}\tfalse\t${signVal}`);
         exportedCount++;
       }
     });
@@ -193,25 +198,31 @@ window.exportTSV = function () {
 /**
  * Exports visible nodes and links to a JSON layout structure file.
  */
-window.exportJSON = function () {
+window.exportJSON = async function () {
   try {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
 
     const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
+
     const exportNodes = [];
-    const visibleNodeMap = new Set();
+    const visibleNodeMap = new Map();
 
     nodes.forEach((n) => {
-      if ((n.isRogue && !VISIBILITY_STATE.Rogue) || n.color === CONFIG.visuals.colors.Transparent) return;
-      visibleNodeMap.add(n.id);
+      if (n.isDummy || String(n.id).startsWith("__dummy")) return;
+      if ((n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) || n.color === CONFIG.visuals.colors.Transparent) return;
+      visibleNodeMap.set(String(n.id), n);
       exportNodes.push({
         id: window.getExportNodeId ? window.getExportNodeId(n) : n.id,
+        rap_id: n.rap_id || n.id,
+        symbol: n.symbol || (n.metadata && (n.metadata.Symbol || n.metadata.symbol)) || "",
+        identifier: n.identifier || (n.metadata && (n.metadata.Identifier || n.metadata.identifier)) || "",
+        msu_id: n.msu_id || (n.metadata && (n.metadata.MSU_ID || n.metadata.msu_id)) || "",
         x: Math.round(n.x * 100) / 100,
         y: Math.round(n.y * 100) / 100,
-        deg: n.deg,
-        originalType: n.originalType,
+        r: n.r,
+        deg: n.deg !== undefined && n.deg !== null ? n.deg : 0,
+        originalType: n.originalType || "Gene",
         isRogue: !!n.isRogue,
-        symbol: n.symbol,
       });
     });
 
@@ -221,24 +232,21 @@ window.exportJSON = function () {
     links.forEach((l) => {
       if (window.isEdgeVisible && !window.isEdgeVisible(l)) return;
 
-      const sId = l.source?.id || l.source;
-      const tId = l.target?.id || l.target;
+      const sId = String(l.source?.id || l.source);
+      const tId = String(l.target?.id || l.target);
 
-      if (visibleNodeMap.has(sId) && visibleNodeMap.has(tId)) {
-        const sNode = typeof l.source === "object" ? l.source : nodes.find((n) => n.id === sId);
-        const tNode = typeof l.target === "object" ? l.target : nodes.find((n) => n.id === tId);
+      const sNode = typeof l.source === "object" ? (visibleNodeMap.has(sId) ? l.source : null) : visibleNodeMap.get(sId);
+      const tNode = typeof l.target === "object" ? (visibleNodeMap.has(tId) ? l.target : null) : visibleNodeMap.get(tId);
 
+      if (sNode && tNode) {
         exportLinks.push({
-          source: window.getExportNodeId && sNode ? window.getExportNodeId(sNode) : sId,
-          target: window.getExportNodeId && tNode ? window.getExportNodeId(tNode) : tId,
-          weight: l.weight !== undefined ? l.weight : l.value || 1,
-          irp: l.irp || 0,
-          has_interacts: l.has_interacts,
+          source: window.getExportNodeId ? window.getExportNodeId(sNode) : sId,
+          target: window.getExportNodeId ? window.getExportNodeId(tNode) : tId,
+          weight: l.weight !== undefined && l.weight !== null ? l.weight : (l.value || 1),
+          irp: l.irp !== undefined && l.irp !== null ? l.irp : null,
+          sign: l.sign || null,
+          has_interacts: l.has_interacts !== false,
           has_regulates: isRegActive ? !!l.has_regulates : false,
-          matched_sequence: l.matched_sequence,
-          p_value: l.p_value,
-          q_value: l.q_value,
-          score: l.score,
         });
       }
     });
@@ -265,7 +273,8 @@ window.exportGenesTSV = async function () {
     if (typeof window.reapplyColors === "function") window.reapplyColors();
 
     const exportNodes = nodes.filter((n) => {
-      if ((n.isRogue && !VISIBILITY_STATE.Rogue) || n.color === CONFIG.visuals.colors.Transparent) return false;
+      if (n.isDummy || String(n.id).startsWith("__dummy")) return false;
+      if ((n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) || n.color === CONFIG.visuals.colors.Transparent) return false;
       return true;
     });
 
@@ -281,22 +290,28 @@ window.exportGenesTSV = async function () {
       if (progressBar) progressBar.style.width = "0%";
     }
 
-    const batchSize = 50;
+    const isHttpMode = !window.RICE2NET_API || window.RICE2NET_API.getMode() === "http";
+    const batchSize = isHttpMode ? 500 : exportNodes.length;
     const totalNodes = exportNodes.length;
-    const totalBatches = Math.ceil(totalNodes / batchSize);
+    const totalBatches = Math.max(1, Math.ceil(totalNodes / batchSize));
 
     for (let i = 0; i < totalNodes; i += batchSize) {
       const batch = exportNodes.slice(i, i + batchSize);
-      await Promise.all(batch.map(async (n) => {
-        try {
-          const res = await fetch(`/api/network/node/${encodeURIComponent(n.id)}`);
-          if (res.ok) {
-            n.dbData = await res.json();
+      const lookupIds = batch.map((n) => String(n.rap_id || n.id));
+      try {
+        const data = await window.RICE2NET_API.getNodesMetadataBatch(lookupIds);
+        const nodesById = (data && data.nodesById) || {};
+        batch.forEach((n) => {
+          const lookupKey = String(n.rap_id || n.id);
+          if (nodesById[lookupKey]) {
+            n.dbData = nodesById[lookupKey];
+          } else if (nodesById[String(n.id)]) {
+            n.dbData = nodesById[String(n.id)];
           }
-        } catch (e) {
-          console.warn(`Failed to fetch metadata for ${n.id}`);
-        }
-      }));
+        });
+      } catch (e) {
+        console.warn(`Batch metadata fetch failed for chunk starting at ${i}:`, e);
+      }
 
       if (loaderText && progressBar) {
         const currentBatch = Math.floor(i / batchSize) + 1;
@@ -320,9 +335,9 @@ window.exportGenesTSV = async function () {
 
       const d = n.dbData || {};
 
-      row.push(d.symbol || "");
-      row.push(d.msu_id || "");
-      row.push(d.identifier || "");
+      row.push(d.symbol || n.symbol || "");
+      row.push(d.msu_id || n.msu_id || "");
+      row.push(n.identifier || d.identifier || "");
       row.push(d.full_name || "");
       row.push(d.kegg_gene || "");
 
@@ -403,7 +418,9 @@ window.exportPNG = function () {
       const exportCtx = exportCanvas.getContext("2d");
 
       const text = document.getElementById("target-input")?.value || "";
-      const rawTargets = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      const rawTargets = window.parseRawTargets
+        ? window.parseRawTargets(text)
+        : text.split(/[\r\n,\t]+/).map((s) => s.trim()).filter(Boolean);
       const targetSet = window.resolveTargetIds ? window.resolveTargetIds(rawTargets) : new Set(rawTargets);
 
       const presentTypes = new Set();
@@ -416,7 +433,8 @@ window.exportPNG = function () {
       let hasVisible = false;
 
       for (const n of nodes) {
-        if (n.isRogue && !VISIBILITY_STATE.Rogue) continue;
+        if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
+        if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
         if (!forceShowEdges && n.color === CONFIG.visuals.colors.Transparent) continue;
         hasVisible = true;
         if (n.x < minX) minX = n.x;
@@ -426,8 +444,8 @@ window.exportPNG = function () {
 
         const baseSpec = window.getTypeVisualSpec ? window.getTypeVisualSpec(n.originalType || "Gene") : { visibilityKey: "Gene" };
         presentTypes.add(baseSpec.visibilityKey);
-        if (targetSet.has(n.id)) hasPresentTarget = true;
-        if (CLUSTER_STATE.data.has(n.id)) presentClusters.add(CLUSTER_STATE.data.get(n.id));
+        if (targetSet.has(String(n.id))) hasPresentTarget = true;
+        if (window.CLUSTERS_ENABLED && CLUSTER_STATE.data.has(n.id)) presentClusters.add(CLUSTER_STATE.data.get(n.id));
       }
 
       if (!hasVisible) { minX = 0; maxX = 800; minY = 0; maxY = 600; }
@@ -462,9 +480,11 @@ window.exportPNG = function () {
       addLegendItem(nodeItems, "AnnotatedGene", CONFIG.visuals.colors.AnnotatedGene, "Annotated Gene", "circle", true);
       addLegendItem(nodeItems, "Gene", CONFIG.visuals.colors.Gene, "Other Gene", "circle", true);
 
-      const activeClusters = [...CLUSTER_STATE.legend]
-        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
-        .filter((c) => CLUSTER_STATE.active.has(c.name) && presentClusters.has(c.name));
+      const activeClusters = window.CLUSTERS_ENABLED
+        ? [...CLUSTER_STATE.legend]
+            .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+            .filter((c) => CLUSTER_STATE.active.has(c.name) && presentClusters.has(c.name))
+        : [];
 
       const items = [];
       if (nodeItems.length > 0) {
@@ -537,10 +557,18 @@ window.exportPNG = function () {
       const edgeA = parseFloat(document.getElementById("viz-edge-alpha")?.value) || 0.5;
       const finalAlpha = THEME === "light" ? Math.min(1.0, edgeA * 2.0) : edgeA;
 
+      const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
+      const normalAlpha = isRegActive ? finalAlpha * 0.4 : finalAlpha;
+      const regLinks = isRegActive ? [] : null;
+      const PNG_EDGE_BATCH = 15000;
+
       exportCtx.lineWidth = Math.max(edgeW / transform.k, edgeW);
+      exportCtx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, ${normalAlpha})`;
+      exportCtx.beginPath();
+      let pngBatchCount = 0;
 
       links.forEach((l) => {
-        if (l.source?.x !== undefined) {
+        if (l.source?.x != null && l.source?.y != null && l.target?.x != null && l.target?.y != null) {
           const isSourceVisible = l.source.color !== CONFIG.visuals.colors.Transparent;
           const isTargetVisible = l.target.color !== CONFIG.visuals.colors.Transparent;
           if (!forceShowEdges && (!isSourceVisible || !isTargetVisible)) return;
@@ -549,30 +577,42 @@ window.exportPNG = function () {
           const isVisible = window.isEdgeVisible ? window.isEdgeVisible(l) : true;
           if (!isVisible) return;
 
-          const isRegActive = window.isRegulationActive ? window.isRegulationActive() : (VISIBILITY_STATE.EdgeBoth ?? 0) > 0;
-          const hasInt = l.has_interacts !== false;
-          const hasReg = !!(l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0);
-          const isThisRegActive = isRegActive && hasReg;
+          const hasReg = !!(isRegActive && l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0);
 
-          if (isThisRegActive) {
-            exportCtx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
-            if (window.drawArrow) {
-              l.directions.forEach(dir => {
-                let srcNode = String(l.source.id) === dir.src ? l.source : l.target;
-                let tgtNode = String(l.target.id) === dir.tgt ? l.target : l.source;
-                window.drawArrow(exportCtx, srcNode.x, srcNode.y, tgtNode.x, tgtNode.y, tgtNode.r || 5, !hasInt, 1.0);
-              });
-            }
+          if (hasReg) {
+            regLinks.push(l);
           } else {
-            const currentAlpha = isRegActive ? finalAlpha * 0.4 : finalAlpha;
-            exportCtx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, ${currentAlpha})`;
-            exportCtx.beginPath(); exportCtx.moveTo(l.source.x, l.source.y); exportCtx.lineTo(l.target.x, l.target.y); exportCtx.stroke();
+            exportCtx.moveTo(l.source.x, l.source.y);
+            exportCtx.lineTo(l.target.x, l.target.y);
+            pngBatchCount++;
+            if (pngBatchCount >= PNG_EDGE_BATCH) {
+              exportCtx.stroke();
+              exportCtx.beginPath();
+              pngBatchCount = 0;
+            }
           }
         }
       });
 
+      if (pngBatchCount > 0) {
+        exportCtx.stroke();
+      }
+
+      if (regLinks && regLinks.length > 0 && window.drawArrow) {
+        exportCtx.strokeStyle = `rgba(${CONFIG.visuals.colors.EdgeRGB}, 1.0)`;
+        regLinks.forEach((l) => {
+          const hasInt = l.has_interacts !== false;
+          l.directions.forEach((dir) => {
+            const srcNode = String(l.source.id) === dir.src ? l.source : l.target;
+            const tgtNode = String(l.target.id) === dir.tgt ? l.target : l.source;
+            window.drawArrow(exportCtx, srcNode.x, srcNode.y, tgtNode.x, tgtNode.y, tgtNode.r || 5, !hasInt, 1.0);
+          });
+        });
+      }
+
       for (const n of nodes) {
-        if (n.isRogue && !VISIBILITY_STATE.Rogue) continue;
+        if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
+        if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
         if (n.color === CONFIG.visuals.colors.Transparent) continue;
 
         exportCtx.save();

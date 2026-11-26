@@ -15,7 +15,8 @@ window.updateActiveCounts = function () {
   const visibleSet = new Set();
 
   nodes.forEach((n) => {
-    if (n.isRogue && !VISIBILITY_STATE.Rogue) return;
+    if (n.isDummy || String(n.id).startsWith("__dummy")) return;
+    if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) return;
     if (n.color === CONFIG.visuals.colors.Transparent) return;
     vNodes++;
     visibleSet.add(n.id);
@@ -66,31 +67,81 @@ function updateTargetStats(found, total) {
  * Evaluates active target gene inputs and updates sidebar match counts.
  */
 window.updateTargetCounts = function () {
-  const text = document.getElementById("target-input").value;
+  const text = document.getElementById("target-input")?.value || "";
   if (!text.trim()) {
     updateTargetStats(0, 0);
     return;
   }
 
-  const rawTargets = text
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const rawTargets = window.parseRawTargets
+    ? window.parseRawTargets(text)
+    : text.split(/[\r\n,\t]+/).map((s) => s.trim()).filter(Boolean);
   const targetSet = window.resolveTargetIds
     ? window.resolveTargetIds(rawTargets)
     : new Set(rawTargets);
 
   let found = 0;
-  nodes.forEach((n) => {
-    if (targetSet.has(n.id)) {
-      if (n.color === CONFIG.visuals.colors.Transparent) return;
-      if (n.isRogue && !VISIBILITY_STATE.Rogue) return;
+  const counted = new Set();
+  const searchPool = (RAW_DATA && Array.isArray(RAW_DATA.nodes) && RAW_DATA.nodes.length > 0) ? RAW_DATA.nodes : nodes;
+  searchPool.forEach((n) => {
+    if (!n || n.isDummy) return;
+    const id = String(n.id);
+    if (id.startsWith("__dummy")) return;
+    if (targetSet.has(id) && !counted.has(id)) {
+      counted.add(id);
       found++;
     }
   });
 
   updateTargetStats(found, rawTargets.length);
 };
+
+/**
+ * Initializes the non-intrusive Web Demo Mode badge and custom import notice helpers.
+ */
+function initDemoModeUI() {
+  if (!window.RICE2NET_API || !window.RICE2NET_API.isDemoMode || !window.RICE2NET_API.isDemoMode()) {
+    return;
+  }
+
+  if (!document.getElementById("demo-badge")) {
+    const container = document.getElementById("container") || document.body;
+    const badge = document.createElement("div");
+    badge.id = "demo-badge";
+    badge.innerHTML = `
+      <span class="demo-badge-dot"></span>
+      <span class="demo-badge-text">Web Demo</span>
+    `;
+    container.appendChild(badge);
+  }
+}
+
+window.showDemoImportNotice = function () {
+  if (!window.RICE2NET_API || !window.RICE2NET_API.isDemoMode || !window.RICE2NET_API.isDemoMode()) {
+    return;
+  }
+  const container = document.getElementById("container") || document.body;
+  let toast = document.getElementById("demo-import-notice");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "demo-import-notice";
+    toast.innerHTML = `
+      <span>
+        <strong>Web Demo Import:</strong> Gene annotation lookup and motif causality are limited to the curated demo genes in Web Demo mode.
+      </span>
+      <button type="button" class="demo-notice-close" onclick="window.hideDemoImportNotice()" title="Dismiss">&times;</button>
+    `;
+    container.appendChild(toast);
+  }
+  toast.style.display = "flex";
+};
+
+window.hideDemoImportNotice = function () {
+  const toast = document.getElementById("demo-import-notice");
+  if (toast) toast.style.display = "none";
+};
+
+initDemoModeUI();
 
 if (typeof window.__APP_CORE__.main === 'function') {
   window.__APP_CORE__.main();

@@ -81,11 +81,10 @@ window.renderTargetLegend = function () {
   const legendTarget = document.getElementById("legend-target");
   if (!legendTarget) return;
 
-  const text = document.getElementById("target-input").value;
-  const rawTargets = text
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const text = document.getElementById("target-input")?.value || "";
+  const rawTargets = window.parseRawTargets
+    ? window.parseRawTargets(text)
+    : text.split(/[\r\n,\t]+/).map((s) => s.trim()).filter(Boolean);
   const targetSet = window.resolveTargetIds
     ? window.resolveTargetIds(rawTargets)
     : new Set(rawTargets);
@@ -241,7 +240,7 @@ window.renderClusterLegend = function () {
   const container = document.getElementById("legend-clusters");
   if (!container) return;
 
-  if (CLUSTER_STATE.legend.length === 0 || CLUSTER_STATE.isAvailable === false) {
+  if (!window.CLUSTERS_ENABLED || CLUSTER_STATE.legend.length === 0 || CLUSTER_STATE.isAvailable === false) {
     container.style.display = "none";
     container.innerHTML = "";
     return;
