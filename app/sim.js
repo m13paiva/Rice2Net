@@ -8,7 +8,7 @@
 window.__APP_CORE__ = window.__APP_CORE__ || {};
 
 /**
- * Calculates connected degrees for all active nodes.
+ * Calculates connected degrees and synchronizes rogue status for all active nodes.
  */
 function calculateDegrees() {
   const nodeById = new Map();
@@ -22,6 +22,12 @@ function calculateDegrees() {
     const t = typeof l.target === "object" ? l.target : nodeById.get(String(l.target));
     if (s) s.deg++;
     if (t) t.deg++;
+  }
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
+    n.isRogue = n.deg === 0;
+    n.dashed = n.isRogue;
   }
 }
 
@@ -74,8 +80,9 @@ function startCalculation(resetParams = true) {
   const h = typeof height !== "undefined" ? height : window.innerHeight || 1000;
 
   nodes.forEach((n) => {
-    if (n.x === undefined) n.x = random() * w;
-    if (n.y === undefined) n.y = random() * h;
+    n._hasLayoutPos = false;
+    if (n.x == null) n.x = random() * w;
+    if (n.y == null) n.y = random() * h;
     n.vx = 0;
     n.vy = 0;
   });
@@ -437,7 +444,7 @@ window.draw = function () {
         const r = n.isTarget ? Math.max(n.r, minTargetR) : n.r;
         if (n.x + r < minX || n.x - r > maxX || n.y + r < minY || n.y - r > maxY) continue;
 
-        const alpha = n.isRogue && !n.isTarget ? rogueOpacity : 1.0;
+        const alpha = n.isRogue ? rogueOpacity : 1.0;
         const key = `${n.color}|${alpha}`;
         let list = buckets.get(key);
         if (!list) {
@@ -488,7 +495,7 @@ window.draw = function () {
       const fillColor = n.fillColor !== undefined ? n.fillColor : n.color;
       const hasFill = !isHollow && !!fillColor && fillColor !== transparentColor;
       const strokeColor = n.strokeColor || n.color || "#000";
-      const fillAlpha = hasFill && n.isRogue && !n.isTarget ? rogueOpacity : 1.0;
+      const fillAlpha = hasFill && n.isRogue ? rogueOpacity : 1.0;
 
       const key = `${isDiamond ? "d" : "c"}|${isHollow ? 1 : 0}|${isDashed ? 1 : 0}|${hasFill ? fillColor : ""}|${fillAlpha}|${strokeColor}`;
       let bucket = buckets.get(key);
@@ -517,7 +524,7 @@ window.draw = function () {
         currentDashed = b.isDashed;
       }
 
-      ctx.lineWidth = (b.isHollow ? 1.6 : 1) * invK;
+      ctx.lineWidth = (b.isHollow || b.isDashed ? 1.6 : 1) * invK;
       ctx.beginPath();
 
       const items = b.items;
@@ -566,7 +573,81 @@ window.draw = function () {
 };
 
 /**
- * Finalizes post-calculation setup, positioning rogue nodes along a peripheral ring.
+ * Positions rogue nodes that do not already have a precomputed graph layout coordinate
+ * into compact concentric peripheral rings around the connected graph so they remain
+ * cleanly visible and never overwrite precomputed coordinates of Z-Score-disconnected nodes.
+ */
+window.positionUnplacedRogueNodes = function () {
+  const w = typeof width !== "undefined" ? width : window.innerWidth || 1000;
+  const h = typeof height !== "undefined" ? height : window.innerHeight || 1000;
+
+  const connectedNodes = [];
+  const rogueToPlace = [];
+
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (!n || n.isDummy || String(n.id).startsWith("__dummy")) continue;
+    if (!n.isRogue) {
+      if (n.x != null && n.y != null) connectedNodes.push(n);
+    } else if (!n._hasLayoutPos || n.x == null || n.y == null) {
+      rogueToPlace.push(n);
+    }
+  }
+
+  if (rogueToPlace.length === 0) return;
+
+  let minX = Infinity,
+    maxX = -Infinity,
+    minY = Infinity,
+    maxY = -Infinity;
+  for (let i = 0; i < connectedNodes.length; i++) {
+    const n = connectedNodes[i];
+    if (n.x < minX) minX = n.x;
+    if (n.x > maxX) maxX = n.x;
+    if (n.y < minY) minY = n.y;
+    if (n.y > maxY) maxY = n.y;
+  }
+
+  if (minX === Infinity) {
+    minX = w / 2;
+    maxX = w / 2;
+    minY = h / 2;
+    maxY = h / 2;
+  }
+
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  const isHeavy = window.isHeavyGraph ? window.isHeavyGraph() : false;
+  const padding = isHeavy ? 250 : 120;
+  const baseRadius = Math.max((maxX - minX) / 2, (maxY - minY) / 2) + padding;
+
+  // Arrange into compact concentric rings so even ~25k rogue genes form a tight halo around the graph
+  const spacing = isHeavy ? 18 : 16;
+  let placed = 0;
+  let ringIdx = 0;
+
+  while (placed < rogueToPlace.length) {
+    const radius = baseRadius + ringIdx * spacing;
+    const capacity = Math.max(8, Math.floor((2 * Math.PI * radius) / spacing));
+    const countOnRing = Math.min(capacity, rogueToPlace.length - placed);
+    const angleOffset = (ringIdx % 2) * (Math.PI / countOnRing);
+
+    for (let j = 0; j < countOnRing; j++) {
+      const n = rogueToPlace[placed + j];
+      const angle = (j / countOnRing) * Math.PI * 2 + angleOffset;
+      n.x = centerX + Math.cos(angle) * radius;
+      n.y = centerY + Math.sin(angle) * radius;
+      n.fx = n.x;
+      n.fy = n.y;
+    }
+
+    placed += countOnRing;
+    ringIdx++;
+  }
+};
+
+/**
+ * Finalizes post-calculation setup, positioning unplaced rogue nodes along concentric peripheral rings.
  * @param {boolean} resetParams - Whether physics parameters were reset.
  */
 function finishSetup(resetParams) {
@@ -599,46 +680,17 @@ function finishSetup(resetParams) {
   updateVisualProps();
   updatePhysicsParams();
 
-  const w = typeof width !== "undefined" ? width : window.innerWidth || 1000;
-  const h = typeof height !== "undefined" ? height : window.innerHeight || 1000;
-
-  const connectedNodes = nodes.filter((n) => !n.isRogue);
-  const rogueNodes = nodes.filter((n) => n.isRogue);
-  if (rogueNodes.length > 0) {
-    let minX = Infinity,
-      maxX = -Infinity,
-      minY = Infinity,
-      maxY = -Infinity;
-    connectedNodes.forEach((n) => {
-      if (n.x < minX) minX = n.x;
-      if (n.x > maxX) maxX = n.x;
-      if (n.y < minY) minY = n.y;
-      if (n.y > maxY) maxY = n.y;
-    });
-    if (minX === Infinity) {
-      minX = w / 2;
-      maxX = w / 2;
-      minY = h / 2;
-      maxY = h / 2;
+  // Preserve computed/loaded layout coordinates on connected nodes so toggling Z-Score
+  // does not relocate nodes that temporarily lose all edges onto the peripheral halo.
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (!n || n.isDummy || String(n.id).startsWith("__dummy")) continue;
+    if (!n.isRogue && n.x != null && n.y != null) {
+      n._hasLayoutPos = true;
     }
-
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-    const padding = window.isHeavyGraph() ? 300 : 150;
-
-    let radius = Math.max((maxX - minX) / 2, (maxY - minY) / 2) + padding;
-    const minCircumference = rogueNodes.length * 6;
-    const minRadius = minCircumference / (2 * Math.PI);
-    radius = Math.max(radius, minRadius);
-
-    rogueNodes.forEach((n, i) => {
-      const angle = (i / rogueNodes.length) * Math.PI * 2;
-      n.x = centerX + Math.cos(angle) * radius;
-      n.y = centerY + Math.sin(angle) * radius;
-      n.fx = n.x;
-      n.fy = n.y;
-    });
   }
+
+  window.positionUnplacedRogueNodes();
 
   let dummiesAdded = false;
   if (nodes.length === 1) {
@@ -681,11 +733,15 @@ function finishSetup(resetParams) {
     if (window.autoFit) window.autoFit();
     if (dummiesAdded) {
       nodes = nodes.filter((n) => !n.isDummy && !String(n.id).startsWith("__dummy"));
-      quadtree = d3
-        .quadtree()
-        .x((d) => d.x)
-        .y((d) => d.y)
-        .addAll(nodes);
+      if (typeof window.rebuildInteractiveQuadtree === "function") {
+        window.rebuildInteractiveQuadtree();
+      } else {
+        quadtree = d3
+          .quadtree()
+          .x((d) => d.x)
+          .y((d) => d.y)
+          .addAll(nodes);
+      }
       if (typeof window.updateActiveCounts === "function") window.updateActiveCounts();
       if (typeof window.updateTargetCounts === "function") window.updateTargetCounts();
     }

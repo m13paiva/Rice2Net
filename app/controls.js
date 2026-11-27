@@ -1,51 +1,57 @@
 /**
  * controls.js - UI Event Listeners & Control Handlers Module
  * 
- * Configures IRP threshold sliders, target gene input parsing, target file upload listeners,
+ * Configures dynamic Z-Score threshold sliders, target gene input parsing, target file upload listeners,
  * theme toggles, physics control bindings, and layout recalculation triggers.
  */
 
 /**
- * Dynamically initializes IRP score threshold slider and number input elements.
+ * Dynamically initializes the Z-Score threshold slider and number input elements inside Target Explorer.
+ * Hidden automatically when the active network does not contain z_score edge attributes.
  */
-function initIRPControls() {
+function initZScoreControls() {
   const targetInput = document.getElementById("target-input");
-  if (targetInput && !document.getElementById("irp-control-container")) {
+  if (targetInput && !document.getElementById("zscore-control-container")) {
     const container = document.createElement("div");
-    container.id = "irp-control-container";
+    container.id = "zscore-control-container";
     container.style.marginTop = "15px";
     container.style.paddingTop = "10px";
     container.style.borderTop = "1px solid #444";
     container.style.pointerEvents = "auto";
+    container.style.display = ZSCORE_STATE.enabled ? "block" : "none";
+
+    const initMin = ZSCORE_STATE.min;
+    const initMax = ZSCORE_STATE.max;
+    const initVal = ZSCORE_STATE.enabled ? ZSCORE_STATE.threshold : DEFAULT_ZSCORE_THRESHOLD;
 
     container.innerHTML = `
       <div style="font-size:0.85rem; color:#bbb; margin-bottom:5px; display:flex; justify-content:space-between;">
-        <span>IRP SCORE THRESHOLD</span>
-        <span id="irp-val-display" style="color:#fff;">0.00</span>
+        <span>Z-SCORE THRESHOLD</span>
+        <span id="zscore-val-display" style="color:#fff;">${Number(initVal).toFixed(2)}</span>
       </div>
       <div style="display:flex; gap:10px; align-items:center;">
-        <input type="range" id="irp-slider" min="0" max="1" step="0.01" value="0" style="flex:1;">
-        <input type="number" id="irp-number" min="0" max="1" step="0.01" value="0" style="width:60px; background:#222; border:1px solid #555; color:#eee; padding:2px 4px; border-radius:3px;">
+        <input type="range" id="zscore-slider" min="${initMin}" max="${initMax}" step="0.01" value="${initVal}" style="flex:1;">
+        <input type="number" id="zscore-number" min="${initMin}" max="${initMax}" step="0.01" value="${initVal}" style="width:68px; background:#222; border:1px solid #555; color:#eee; padding:2px 4px; border-radius:3px;">
       </div>
     `;
 
     targetInput.parentNode.appendChild(container);
 
-    const slider = document.getElementById("irp-slider");
-    const number = document.getElementById("irp-number");
-    const display = document.getElementById("irp-val-display");
-    let irpDebounceTimer = null;
+    const slider = document.getElementById("zscore-slider");
+    const number = document.getElementById("zscore-number");
+    const display = document.getElementById("zscore-val-display");
+    let zscoreDebounceTimer = null;
 
     function clampThreshold(val) {
       let v = parseFloat(val);
-      if (isNaN(v)) v = 0;
-      if (v > 1) v = 1;
-      if (v < 0) v = 0;
+      if (!Number.isFinite(v)) v = ZSCORE_STATE.defaultThreshold;
+      if (v > ZSCORE_STATE.max) v = ZSCORE_STATE.max;
+      if (v < ZSCORE_STATE.min) v = ZSCORE_STATE.min;
       return v;
     }
 
     function applyThreshold(v) {
-      IRP_STATE.threshold = v;
+      ZSCORE_STATE.threshold = v;
       if (typeof window.applyEdgeFilter === "function") {
         window.applyEdgeFilter();
       }
@@ -59,7 +65,7 @@ function initIRPControls() {
       return v;
     }
 
-    function isLargeIRPNetwork() {
+    function isLargeZScoreNetwork() {
       const srcNodes = (RAW_DATA && (RAW_DATA.workingNodes || RAW_DATA.nodes)) || nodes;
       const srcLinks = (RAW_DATA && (RAW_DATA.workingLinks || RAW_DATA.links)) || links;
       return (
@@ -70,15 +76,15 @@ function initIRPControls() {
 
     slider.addEventListener("input", (e) => {
       const v = updateUI(e.target.value);
-      clearTimeout(irpDebounceTimer);
-      if (isLargeIRPNetwork()) {
-        irpDebounceTimer = setTimeout(() => applyThreshold(v), 1000);
+      clearTimeout(zscoreDebounceTimer);
+      if (isLargeZScoreNetwork()) {
+        zscoreDebounceTimer = setTimeout(() => applyThreshold(v), 1000);
       } else {
         applyThreshold(v);
       }
     });
     number.addEventListener("change", (e) => {
-      clearTimeout(irpDebounceTimer);
+      clearTimeout(zscoreDebounceTimer);
       const v = updateUI(e.target.value);
       applyThreshold(v);
     });
@@ -86,20 +92,100 @@ function initIRPControls() {
 }
 
 /**
- * Updates IRP threshold control values programmatically.
+ * Inspects edges of the active master network to compute min/max Z-Score bounds
+ * and show or hide the Z-Score slider UI accordingly.
+ * @param {Array<Object>} edgeList - Master edge array (e.g., RAW_DATA.links).
+ * @param {number|null} preferredThreshold - Optional threshold override (defaults to 1.28 clamped to [min, max]).
+ * @returns {boolean} True if Z-Score filtering is enabled for this network.
+ */
+window.configureZScoreBounds = function (edgeList, preferredThreshold = null) {
+  initZScoreControls();
+
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let countWithZ = 0;
+
+  if (Array.isArray(edgeList)) {
+    for (let i = 0; i < edgeList.length; i++) {
+      const e = edgeList[i];
+      if (!e || e.z_score === null || e.z_score === undefined || e.z_score === "") continue;
+      const z = Number(e.z_score);
+      if (!Number.isFinite(z)) continue;
+      countWithZ++;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+    }
+  }
+
+  const container = document.getElementById("zscore-control-container");
+  const slider = document.getElementById("zscore-slider");
+  const number = document.getElementById("zscore-number");
+  const display = document.getElementById("zscore-val-display");
+
+  if (countWithZ === 0) {
+    ZSCORE_STATE.enabled = false;
+    ZSCORE_STATE.min = 0;
+    ZSCORE_STATE.max = 1;
+    ZSCORE_STATE.defaultThreshold = DEFAULT_ZSCORE_THRESHOLD;
+    ZSCORE_STATE.threshold = -Infinity;
+    if (container) container.style.display = "none";
+    return false;
+  }
+
+  const roundedMin = Math.floor(minZ * 100) / 100;
+  const roundedMax = Math.ceil(maxZ * 100) / 100;
+  const effectiveMax = roundedMax > roundedMin ? roundedMax : roundedMin + 0.01;
+
+  const baseDefault = Math.min(effectiveMax, Math.max(roundedMin, DEFAULT_ZSCORE_THRESHOLD));
+  const targetVal =
+    preferredThreshold !== null && Number.isFinite(Number(preferredThreshold))
+      ? Math.min(effectiveMax, Math.max(roundedMin, Number(preferredThreshold)))
+      : baseDefault;
+
+  ZSCORE_STATE.enabled = true;
+  ZSCORE_STATE.min = roundedMin;
+  ZSCORE_STATE.max = effectiveMax;
+  ZSCORE_STATE.defaultThreshold = baseDefault;
+  ZSCORE_STATE.threshold = targetVal;
+
+  if (container) container.style.display = "block";
+  if (slider) {
+    slider.min = String(roundedMin);
+    slider.max = String(effectiveMax);
+    slider.value = String(targetVal);
+  }
+  if (number) {
+    number.min = String(roundedMin);
+    number.max = String(effectiveMax);
+    number.value = String(targetVal);
+  }
+  if (display) {
+    display.innerText = targetVal.toFixed(2);
+  }
+
+  return true;
+};
+
+/**
+ * Updates Z-Score threshold control values programmatically.
  * @param {number|string} val - Threshold score value.
  */
-window.updateIRPControlUI = function (val) {
-  const slider = document.getElementById("irp-slider");
-  const number = document.getElementById("irp-number");
-  const display = document.getElementById("irp-val-display");
+window.updateZScoreControlUI = function (val) {
+  if (!ZSCORE_STATE.enabled) return;
 
-  if (slider && number && display) {
-    slider.value = val;
-    number.value = val;
-    display.innerText = parseFloat(val).toFixed(2);
-    IRP_STATE.threshold = parseFloat(val);
-  }
+  const slider = document.getElementById("zscore-slider");
+  const number = document.getElementById("zscore-number");
+  const display = document.getElementById("zscore-val-display");
+
+  let v = parseFloat(val);
+  if (!Number.isFinite(v)) v = ZSCORE_STATE.defaultThreshold;
+  if (v < ZSCORE_STATE.min) v = ZSCORE_STATE.min;
+  if (v > ZSCORE_STATE.max) v = ZSCORE_STATE.max;
+
+  ZSCORE_STATE.threshold = v;
+  if (slider) slider.value = String(v);
+  if (number) number.value = String(v);
+  if (display) display.innerText = v.toFixed(2);
 };
 
 /**
@@ -123,11 +209,11 @@ document.getElementById("target-input").addEventListener("input", () => {
 });
 
 /**
- * Resets target gene inputs, IRP thresholds, and network subnetwork filters.
+ * Resets target gene inputs, Z-Score threshold (back to default), and subnetwork filters.
  */
 window.clearTargets = function () {
-  if (typeof window.updateIRPControlUI === "function") {
-    window.updateIRPControlUI(0);
+  if (ZSCORE_STATE.enabled && typeof window.updateZScoreControlUI === "function") {
+    window.updateZScoreControlUI(ZSCORE_STATE.defaultThreshold);
   }
 
   document.getElementById("target-input").value = "";
@@ -135,8 +221,13 @@ window.clearTargets = function () {
   document.getElementById("target-prune").checked = false;
   document.getElementById("target-depth").value = 1;
 
-  if (nodes.length < RAW_DATA.nodes.length) window.resetToFull();
-  else window.reapplyColors();
+  if (RAW_DATA.workingLinks !== null || nodes.length < RAW_DATA.nodes.length) {
+    window.resetToFull();
+  } else if (ZSCORE_STATE.enabled && typeof window.applyEdgeFilter === "function") {
+    window.applyEdgeFilter();
+  } else {
+    window.reapplyColors();
+  }
 };
 
 /**
@@ -163,10 +254,12 @@ window.toggleTheme = function (isLight) {
     Array.isArray(CLUSTER_STATE.legend)
   ) {
     CLUSTER_STATE.legend.forEach((cluster, index) => {
-      cluster.color =
-        CONFIG.visuals.colors.Clusters[
-          index % CONFIG.visuals.colors.Clusters.length
-        ];
+      if (!cluster.customColor) {
+        cluster.color =
+          CONFIG.visuals.colors.Clusters[
+            index % CONFIG.visuals.colors.Clusters.length
+          ];
+      }
     });
   }
 
@@ -187,6 +280,7 @@ window.recalculateStatic = function () {
     n.y = undefined;
     n.vx = 0;
     n.vy = 0;
+    n._hasLayoutPos = false;
   });
   if (window.__APP_CORE__.startCalculation) {
     window.__APP_CORE__.startCalculation(false);

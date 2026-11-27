@@ -143,9 +143,10 @@ body.light-mode #legend { color: #000; }
 .shape-diamond { width: 10px; height: 10px; transform: rotate(45deg); margin-left: 10px; margin-right: 2px; border: 1px solid rgba(0,0,0,0.2); }
 
 /* --- CONTROLS (Always Dark inside Sidebar) --- */
+#sidebar, #sidebar * { box-sizing: border-box; }
 .control-group { margin-bottom: 15px; }
 .control-group label { display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 600; margin-bottom: 8px; color: #ccc; }
-input[type=range], input[type=number] { width: 100%; background: transparent; cursor: pointer; }
+input[type=range], input[type=number] { width: 100%; background: transparent; cursor: pointer; box-sizing: border-box; }
 input[type=number] { 
     background: #333; border: 1px solid #444; color: #fff; padding: 6px; border-radius: 4px; 
 }
@@ -168,8 +169,8 @@ input[type=range]::-webkit-slider-thumb { height: 16px; width: 16px; border-radi
 .btn-export:hover { background: #455A64; }
 
 /* TEXT AREA & FILE */
-textarea { width: 100%; height: 80px; background: #333; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px; resize: vertical; margin-bottom: 10px; font-family: monospace; font-size: 0.85rem; }
-input[type=file] { font-size: 0.8rem; color: #999; margin-bottom: 10px; width: 100%; }
+textarea { width: 100%; height: 80px; background: #333; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px; resize: vertical; margin-bottom: 10px; font-family: monospace; font-size: 0.85rem; box-sizing: border-box; display: block; }
+input[type=file] { font-size: 0.8rem; color: #999; margin-bottom: 10px; width: 100%; box-sizing: border-box; }
 
 /* CHECKBOX ROW */
 .checkbox-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; font-size: 0.9rem; color: #ccc; }
@@ -413,4 +414,550 @@ details details summary { font-weight: normal; font-size: 0.9rem; color: #999; }
     font-size: 1rem;
     font-weight: 600;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* --- ANALYZE / COMMUNITY DISCOVERY PANEL --- */
+.cd-subpanel {
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid #3c3c3c;
+    border-radius: 5px;
+    padding: 10px;
+    margin-bottom: 14px;
+}
+
+.cd-select {
+    width: 100%;
+    background: #333;
+    border: 1px solid #444;
+    color: #fff;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    box-sizing: border-box;
+}
+
+.cd-scope-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.cd-scope-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #aaa;
+}
+
+.cd-radio-row {
+    display: flex;
+    gap: 8px;
+}
+
+.cd-radio-option {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: #2e2e2e;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 5px 7px;
+    font-size: 0.78rem;
+    color: #ddd;
+    cursor: pointer;
+    user-select: none;
+}
+
+.cd-radio-option:hover {
+    border-color: #666;
+}
+
+.cd-radio-option input[type="radio"] {
+    margin: 0;
+    accent-color: #2196F3;
+    cursor: pointer;
+}
+
+.cd-status-summary {
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: #ccc;
+    background: rgba(33, 150, 243, 0.12);
+    border: 1px solid rgba(33, 150, 243, 0.35);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+}
+
+.cd-status-summary.cd-status-empty {
+    background: rgba(255, 167, 38, 0.12);
+    border-color: rgba(255, 167, 38, 0.4);
+    color: #ffd599;
+}
+
+.cd-status-summary.cd-status-error {
+    background: rgba(211, 47, 47, 0.15);
+    border-color: rgba(211, 47, 47, 0.5);
+    color: #ff9e9e;
+}
+
+/* --- INTERACTIVE CLUSTER LEGEND CONTROLS --- */
+.cluster-legend-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.83rem;
+    margin-bottom: 5px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: background 0.15s, opacity 0.2s;
+}
+
+.cluster-legend-row:hover {
+    background: rgba(128, 128, 128, 0.16);
+}
+
+.cluster-color-input {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.cluster-color-input::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+.cluster-color-input::-webkit-color-swatch {
+    border: none;
+    border-radius: 2px;
+}
+
+body.light-mode .cluster-color-input {
+    border-color: rgba(0, 0, 0, 0.35);
+}
+
+.cluster-legend-name {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 210px;
+    cursor: pointer;
+}
+
+.cluster-legend-count {
+    font-size: 0.72rem;
+    opacity: 0.65;
+    margin-left: 3px;
+}
+
+.cluster-name-edit {
+    flex: 1;
+    min-width: 110px;
+    max-width: 210px;
+    background: #1e1e1e;
+    color: #fff;
+    border: 1px solid #4db8ff;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 0.82rem;
+    outline: none;
+}
+
+body.light-mode .cluster-name-edit {
+    background: #fff;
+    color: #111;
+}
+
+.cluster-icon-btn {
+    background: transparent;
+    border: none;
+    color: inherit;
+    opacity: 0.7;
+    cursor: pointer;
+    padding: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.cluster-icon-btn:hover {
+    opacity: 1;
+    background: rgba(128, 128, 128, 0.25);
+}
+
+.cluster-icon-btn.cluster-del-btn:hover {
+    color: #ff6b6b;
+}
+
+/* --- ORA ENRICHMENT REPORT MODAL (inside #detail-box) --- */
+.ora-cluster-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #444;
+}
+
+body.light-mode .ora-cluster-tabs {
+    border-bottom-color: #ccc;
+}
+
+.ora-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(128, 128, 128, 0.14);
+    border: 1px solid #555;
+    color: inherit;
+    border-radius: 5px;
+    padding: 6px 10px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.ora-tab-btn.active {
+    background: rgba(33, 150, 243, 0.22);
+    border-color: #4db8ff;
+    font-weight: 600;
+}
+
+.ora-tab-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.ora-cluster-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: rgba(128, 128, 128, 0.1);
+    border: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.ora-name-input {
+    flex: 1;
+    min-width: 180px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid #555;
+    color: inherit;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+body.light-mode .ora-name-input {
+    background: #fff;
+    border-color: #bbb;
+}
+
+.ora-small-btn {
+    background: #37474F;
+    border: 1px solid #546E7A;
+    color: #fff;
+    padding: 6px 11px;
+    border-radius: 4px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.ora-small-btn:hover {
+    background: #455A64;
+}
+
+.ora-small-btn.ora-danger {
+    background: transparent;
+    border-color: #D32F2F;
+    color: #ff6b6b;
+}
+
+.ora-small-btn.ora-danger:hover {
+    background: #D32F2F;
+    color: #fff;
+}
+
+.ora-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.86rem;
+}
+
+.ora-table th {
+    text-align: left;
+    padding: 8px 6px;
+    border-bottom: 2px solid #555;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    opacity: 0.8;
+    position: sticky;
+    top: 0;
+    background: #141414;
+}
+
+body.light-mode .ora-table th {
+    background: #fff;
+    border-bottom-color: #ccc;
+}
+
+.ora-table td {
+    padding: 7px 6px;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.22);
+    vertical-align: top;
+}
+
+.ora-source-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    font-family: monospace;
+    background: rgba(77, 184, 255, 0.18);
+    color: #4db8ff;
+    white-space: nowrap;
+}
+
+body.light-mode .ora-source-badge {
+    background: rgba(25, 118, 210, 0.12);
+    color: #1565C0;
+}
+
+.ora-source-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.ora-filter-chip {
+    background: transparent;
+    border: 1px solid #555;
+    color: inherit;
+    padding: 3px 9px;
+    border-radius: 12px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    opacity: 0.75;
+}
+
+.ora-filter-chip.active {
+    background: #2196F3;
+    border-color: #2196F3;
+    color: #fff;
+    opacity: 1;
+}
+
+/* --- PROMOTER-BINDING MOTIF SOURCE CHECKBOXES --- */
+.pbm-source-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.pbm-source-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #2e2e2e;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 0.82rem;
+    color: #ddd;
+    cursor: pointer;
+    user-select: none;
+}
+
+.pbm-source-option:hover {
+    border-color: #666;
+}
+
+.pbm-source-option input[type="checkbox"] {
+    margin: 0;
+    accent-color: #2196F3;
+    cursor: pointer;
+}
+
+/* --- ORA FOLD HORIZONTAL BAR PLOT --- */
+.ora-fold-header {
+    min-width: 155px;
+}
+
+.ora-fold-axis-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.68rem;
+    font-weight: normal;
+    text-transform: none;
+    letter-spacing: 0;
+    opacity: 0.7;
+    margin-top: 2px;
+    font-family: monospace;
+}
+
+.ora-fold-cell {
+    min-width: 155px;
+    vertical-align: middle !important;
+}
+
+.ora-fold-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ora-fold-track {
+    flex: 1;
+    height: 12px;
+    background: rgba(128, 128, 128, 0.18);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+}
+
+.ora-fold-bar {
+    height: 100%;
+    border-radius: 3px;
+    min-width: 3px;
+    transition: width 0.2s ease;
+}
+
+.ora-fold-val {
+    font-family: monospace;
+    font-size: 0.78rem;
+    white-space: nowrap;
+    min-width: 44px;
+    text-align: right;
+    opacity: 0.9;
+}
+
+/* --- MULTI-PARAMETER ORA SORT CONTROLS --- */
+.ora-sort-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 8px 10px;
+    border-radius: 5px;
+    background: rgba(128, 128, 128, 0.08);
+    border: 1px solid rgba(128, 128, 128, 0.22);
+}
+
+.ora-sort-level {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.ora-sort-label {
+    font-size: 0.76rem;
+    font-weight: 600;
+    opacity: 0.75;
+    white-space: nowrap;
+}
+
+.ora-sort-select {
+    background: #2b2b2b;
+    color: #eee;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 4px 7px;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+body.light-mode .ora-sort-select {
+    background: #fff;
+    color: #222;
+    border-color: #bbb;
+}
+
+.ora-sort-dir-btn {
+    background: #333;
+    color: #eee;
+    border: 1px solid #555;
+    border-radius: 4px;
+    width: 26px;
+    height: 26px;
+    font-size: 0.85rem;
+    font-weight: bold;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ora-sort-dir-btn:hover:not(:disabled) {
+    background: #444;
+    border-color: #4db8ff;
+}
+
+.ora-sort-dir-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+body.light-mode .ora-sort-dir-btn {
+    background: #f0f0f0;
+    color: #222;
+    border-color: #bbb;
+}
+
+.ora-sort-reset-btn {
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid #555;
+    color: inherit;
+    border-radius: 4px;
+    padding: 4px 9px;
+    font-size: 0.76rem;
+    cursor: pointer;
+    opacity: 0.8;
+}
+
+.ora-sort-reset-btn:hover {
+    opacity: 1;
+    border-color: #4db8ff;
+}
+
+.ora-th-sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.ora-th-sortable:hover {
+    color: #4db8ff;
+}
+
+.ora-th-sort-badge {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 0.7rem;
+    color: #4db8ff;
+    font-weight: 700;
 }
