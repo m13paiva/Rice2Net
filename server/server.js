@@ -4,11 +4,18 @@
  */
 
 require("dotenv").config();
+const zlib = require("zlib");
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const neo4j = require("neo4j-driver");
+const {
+  runCommunityDiscovery,
+  runOraForClusters,
+  getOverlapGenesForTerm,
+  cleanKeggName,
+} = require("./community_discovery");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -47,8 +54,19 @@ app.use(
   })
 );
 
-// 4. Payload Size Limits
-app.use(express.json({ limit: "2mb" }));
+// 4. Payload Size Limits (allow larger payloads for community discovery & ORA routes)
+const defaultJsonParser = express.json({ limit: "2mb" });
+const analysisJsonParser = express.json({ limit: "64mb" });
+app.use((req, res, next) => {
+  if (
+    req.path === "/api/analyze/community-discovery" ||
+    req.path === "/api/analyze/ora" ||
+    req.path === "/api/analyze/term-genes"
+  ) {
+    return analysisJsonParser(req, res, next);
+  }
+  return defaultJsonParser(req, res, next);
+});
 app.use(express.urlencoded({ limit: "2mb", extended: true }));
 
 // 5. Rate Limiting Configuration
@@ -91,11 +109,49 @@ const isValidIdentifier = (id) => {
 
 /**
  * GET /api/network/init
- * Streams all nodes and baseline interactome edges to avoid memory bottlenecks.
+ * Streams all nodes and baseline interactome edges in compact integer-indexed tuple format
+ * (with chunked buffering and gzip compression when supported) to minimize payload size and browser RAM.
+ * Supports optional ?format=legacy and ?minZ=<number> query parameters.
  */
 app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
   const session = driver.session({ defaultAccessMode: neo4j.session.READ });
   let isClosed = false;
+
+  const useLegacy = String(req.query.format || "").toLowerCase() === "legacy";
+  const rawMinZ = req.query.minZ !== undefined ? Number(req.query.minZ) : null;
+  const hasMinZ = rawMinZ !== null && Number.isFinite(rawMinZ);
+
+  const acceptEncoding = String(req.headers["accept-encoding"] || "");
+  const useGzip = acceptEncoding.includes("gzip");
+
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Vary", "Accept-Encoding");
+
+  let outStream = res;
+  if (useGzip) {
+    res.setHeader("Content-Encoding", "gzip");
+    outStream = zlib.createGzip({ level: 1 });
+    outStream.pipe(res);
+  }
+
+  let outBuf = "";
+  const FLUSH_THRESHOLD = 65536;
+  const writeChunk = (str) => {
+    if (isClosed) return;
+    outBuf += str;
+    if (outBuf.length >= FLUSH_THRESHOLD) {
+      outStream.write(outBuf);
+      outBuf = "";
+    }
+  };
+  const flushAndEnd = () => {
+    if (isClosed) return;
+    if (outBuf.length > 0) {
+      outStream.write(outBuf);
+      outBuf = "";
+    }
+    outStream.end();
+  };
 
   const cleanup = async () => {
     if (!isClosed) {
@@ -110,10 +166,12 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
 
   req.on("close", cleanup);
 
-  res.setHeader("Content-Type", "application/json");
-  res.write('{"nodes":[');
+  writeChunk(useLegacy ? '{"nodes":[' : '{"format":"compact-v1","nodes":[');
 
+  const nodeIdxById = new Map();
+  let nodeCount = 0;
   let isFirstNode = true;
+
   session
     .run(
       `
@@ -124,62 +182,87 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
     .subscribe({
       onNext: (record) => {
         if (isClosed) return;
-        if (!isFirstNode) res.write(",");
+        const id = record.get("id");
+        nodeIdxById.set(String(id), nodeCount++);
         const degVal = record.get("deg");
-        res.write(
-          JSON.stringify({
-            id: record.get("id"),
-            x: record.get("x"),
-            y: record.get("y"),
-            deg: degVal !== null && degVal !== undefined && degVal.toNumber ? degVal.toNumber() : degVal,
-            originalType: record.get("type") || "Gene",
-            symbol: record.get("symbol"),
-            msu_id: record.get("msu_id"),
-            identifier: record.get("identifier"),
-            isRogue: record.get("x") === null,
-          })
-        );
+        const nodeJson = JSON.stringify({
+          id,
+          x: record.get("x"),
+          y: record.get("y"),
+          deg: degVal !== null && degVal !== undefined && degVal.toNumber ? degVal.toNumber() : degVal,
+          originalType: record.get("type") || "Gene",
+          symbol: record.get("symbol"),
+          msu_id: record.get("msu_id"),
+          identifier: record.get("identifier"),
+          isRogue: record.get("x") === null,
+        });
+        writeChunk(isFirstNode ? nodeJson : "," + nodeJson);
         isFirstNode = false;
       },
       onCompleted: () => {
         if (isClosed) return;
-        res.write('],"edges":[');
+        writeChunk('],"edges":[');
         let isFirstEdge = true;
-        session
-          .run(
-            `
+
+        const edgeQuery = hasMinZ
+          ? `
             MATCH (s:Gene)-[r:INTERACTS_WITH]->(t:Gene)
-            RETURN s.id as s, t.id as t, r.weight as w, r.irp as irp, r.sign as sign
+            WHERE r.z_score >= $minZ
+            RETURN s.id as s, t.id as t, r.weight as w, r.z_score as z_score, r.sign as sign
             `
-          )
+          : `
+            MATCH (s:Gene)-[r:INTERACTS_WITH]->(t:Gene)
+            RETURN s.id as s, t.id as t, r.weight as w, r.z_score as z_score, r.sign as sign
+            `;
+
+        session
+          .run(edgeQuery, hasMinZ ? { minZ: rawMinZ } : {})
           .subscribe({
             onNext: (record) => {
               if (isClosed) return;
-              if (!isFirstEdge) res.write(",");
-              res.write(
-                JSON.stringify({
-                  source: record.get("s"),
-                  target: record.get("t"),
+              const sId = record.get("s");
+              const tId = record.get("t");
+              const wVal = record.get("w");
+              const zVal = record.get("z_score");
+              const signVal = record.get("sign");
+
+              if (useLegacy) {
+                const edgeJson = JSON.stringify({
+                  source: sId,
+                  target: tId,
                   has_interacts: true,
                   has_regulates: false,
-                  weight: record.get("w"),
-                  irp: record.get("irp"),
-                  sign: record.get("sign") || null,
-                })
-              );
+                  weight: wVal,
+                  z_score: zVal !== null && zVal !== undefined ? zVal : null,
+                  sign: signVal || null,
+                });
+                writeChunk(isFirstEdge ? edgeJson : "," + edgeJson);
+                isFirstEdge = false;
+                return;
+              }
+
+              const sIdx = nodeIdxById.get(String(sId));
+              const tIdx = nodeIdxById.get(String(tId));
+              if (sIdx === undefined || tIdx === undefined) return;
+
+              const wStr = wVal !== null && wVal !== undefined ? wVal : 1;
+              const zStr = zVal !== null && zVal !== undefined ? zVal : "null";
+              const signCode = signVal === "+" ? 1 : signVal === "-" ? -1 : 0;
+              const tuple = `[${sIdx},${tIdx},${wStr},${zStr},${signCode}]`;
+              writeChunk(isFirstEdge ? tuple : "," + tuple);
               isFirstEdge = false;
             },
             onCompleted: async () => {
               if (!isClosed) {
-                res.write("]}");
-                res.end();
+                writeChunk("]}");
+                flushAndEnd();
               }
               await cleanup();
             },
             onError: async (err) => {
               console.error("Edge Stream Error:", err);
               if (!res.headersSent) res.status(500).json({ error: "Edge streaming failed." });
-              else res.end();
+              else flushAndEnd();
               await cleanup();
             },
           });
@@ -187,18 +270,49 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
       onError: async (err) => {
         console.error("Node Stream Error:", err);
         if (!res.headersSent) res.status(500).json({ error: "Node streaming failed." });
-        else res.end();
+        else flushAndEnd();
         await cleanup();
       },
     });
 });
 
+// Strict allowlist mapping motif database source names <-> Neo4j REGULATES boolean properties & Motif.source labels
+const MOTIF_SOURCE_MAP = {
+  PlantTFDB: { regProp: "PlantTFDB", motifSource: "PlantTFDB" },
+  "JASPAR Core": { regProp: "JASPAR_Core", motifSource: "JASPAR Core" },
+  JASPAR_Core: { regProp: "JASPAR_Core", motifSource: "JASPAR Core" },
+  "JASPAR Unvalidated": { regProp: "JASPAR_Unvalidated", motifSource: "JASPAR Unvalidated" },
+  JASPAR_Unvalidated: { regProp: "JASPAR_Unvalidated", motifSource: "JASPAR Unvalidated" },
+  "CIS-BP": { regProp: "CIS_BP", motifSource: "CIS-BP" },
+  CIS_BP: { regProp: "CIS_BP", motifSource: "CIS-BP" },
+};
+
+function parseMotifSources(rawSources) {
+  if (rawSources === undefined || rawSources === null) return null;
+  const list = Array.isArray(rawSources)
+    ? rawSources
+    : String(rawSources)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+  const resolved = [];
+  const seenProps = new Set();
+  for (const item of list) {
+    const entry = MOTIF_SOURCE_MAP[String(item || "").trim()];
+    if (entry && !seenProps.has(entry.regProp)) {
+      seenProps.add(entry.regProp);
+      resolved.push(entry);
+    }
+  }
+  return resolved;
+}
+
 /**
  * POST /api/network/edges/regulates
- * Queries regulation relationships between gene pairs.
+ * Queries regulation relationships between gene pairs, optionally filtered by motif sources.
  */
 app.post("/api/network/edges/regulates", async (req, res) => {
-  const { pairs } = req.body;
+  const { pairs, sources } = req.body;
 
   if (!pairs || !Array.isArray(pairs) || pairs.length === 0) {
     return res.status(400).json({ error: "Invalid edge pairs list provided." });
@@ -212,6 +326,17 @@ app.post("/api/network/edges/regulates", async (req, res) => {
     return res.status(400).json({ error: "No valid identifier pairs provided." });
   }
 
+  const parsedSources = parseMotifSources(sources);
+  if (parsedSources !== null && parsedSources.length === 0) {
+    return res.json({ edges: [] });
+  }
+
+  const buildSourceWhere = (relAlias) => {
+    if (!parsedSources) return "";
+    const checks = parsedSources.map((s) => `${relAlias}.${s.regProp} = true`);
+    return `WHERE ${checks.join(" OR ")}`;
+  };
+
   const session = driver.session({ defaultAccessMode: neo4j.session.READ });
   try {
     const result = await session.run(
@@ -219,13 +344,15 @@ app.post("/api/network/edges/regulates", async (req, res) => {
       UNWIND $pairs AS pair
       MATCH (a:Gene {id: pair.s}), (b:Gene {id: pair.t})
       OPTIONAL MATCH (a)-[r1:REGULATES]->(b)
+      ${buildSourceWhere("r1")}
       OPTIONAL MATCH (b)-[r2:REGULATES]->(a)
+      ${buildSourceWhere("r2")}
       WITH pair, r1, r2
       WHERE r1 IS NOT NULL OR r2 IS NOT NULL
       WITH pair, [r IN [r1, r2] WHERE r IS NOT NULL] AS valid_rels
       UNWIND valid_rels AS r
       WITH pair, startNode(r).id AS regulator, endNode(r).id AS regulated
-      WITH pair, collect({src: regulator, tgt: regulated}) AS directions
+      WITH pair, collect(DISTINCT {src: regulator, tgt: regulated}) AS directions
       RETURN pair.s AS original_s,
              pair.t AS original_t,
              directions
@@ -251,20 +378,27 @@ app.post("/api/network/edges/regulates", async (req, res) => {
 
 /**
  * GET /api/network/edges/binds
- * Fetches motif binding information between source and target genes.
+ * Fetches motif binding information between source and target genes, optionally filtered by motif sources.
  */
 app.get("/api/network/edges/binds", async (req, res) => {
-  const { source, target } = req.query;
+  const { source, target, sources } = req.query;
 
   if (!source || !target || !isValidIdentifier(source) || !isValidIdentifier(target)) {
     return res.status(400).json({ error: "Valid source and target identifiers are required." });
   }
+
+  const parsedSources = parseMotifSources(sources);
+  if (parsedSources !== null && parsedSources.length === 0) {
+    return res.json({ binds: [] });
+  }
+  const motifSources = parsedSources ? parsedSources.map((s) => s.motifSource) : null;
 
   const session = driver.session({ defaultAccessMode: neo4j.session.READ });
   try {
     const result = await session.run(
       `
       MATCH (s:Gene {id: $source})-[:HAS_MOTIF]->(m:Motif)-[b:BINDS]->(t:Gene {id: $target})
+      ${motifSources ? "WHERE m.source IN $motifSources" : ""}
       RETURN m.id AS motif_id,
              m.source AS motif_source,
              b.strand AS strand,
@@ -276,7 +410,7 @@ app.get("/api/network/edges/binds", async (req, res) => {
              b.stop AS stop,
              b.occurrence AS occurrence
       `,
-      { source, target }
+      { source, target, motifSources }
     );
 
     const binds = result.records.map((r) => {
@@ -311,11 +445,17 @@ app.get("/api/network/edges/binds", async (req, res) => {
  * Fetches motif binding information for a batch of directed source->target pairs.
  */
 app.post("/api/network/edges/binds", async (req, res) => {
-  const { pairs } = req.body;
+  const { pairs, sources } = req.body;
 
   if (!pairs || !Array.isArray(pairs) || pairs.length === 0) {
     return res.status(400).json({ error: "Invalid edge pairs list provided." });
   }
+
+  const parsedSources = parseMotifSources(sources);
+  if (parsedSources !== null && parsedSources.length === 0) {
+    return res.json({ bindsByPair: {} });
+  }
+  const motifSources = parsedSources ? parsedSources.map((s) => s.motifSource) : null;
 
   const validPairs = pairs
     .filter(
@@ -340,6 +480,7 @@ app.post("/api/network/edges/binds", async (req, res) => {
       `
       UNWIND $pairs AS pair
       MATCH (s:Gene {id: pair.source})-[:HAS_MOTIF]->(m:Motif)-[b:BINDS]->(t:Gene {id: pair.target})
+      ${motifSources ? "WHERE m.source IN $motifSources" : ""}
       RETURN pair.source AS source,
              pair.target AS target,
              m.id AS motif_id,
@@ -353,7 +494,7 @@ app.post("/api/network/edges/binds", async (req, res) => {
              b.stop AS stop,
              b.occurrence AS occurrence
       `,
-      { pairs: validPairs }
+      { pairs: validPairs, motifSources }
     );
 
     const bindsByPair = {};
@@ -392,27 +533,112 @@ app.post("/api/network/edges/binds", async (req, res) => {
 
 /**
  * GET /api/network/clusters
- * Returns functional cluster definitions and assigned genes.
+ * Returns precomputed global functional clusters with their assigned genes, colors,
+ * and precomputed ORA terms via (:Cluster)-[:ENRICHED_IN]->(term) for instant startup.
  */
 app.get("/api/network/clusters", async (req, res) => {
-  const session = driver.session({ defaultAccessMode: neo4j.session.READ });
+  const toNum = (v) =>
+    v !== null && v !== undefined && typeof v.toNumber === "function" ? v.toNumber() : v;
+
   try {
-    const result = await session.run(`
-      MATCH (c:Cluster)<-[:BELONGS_TO_CLUSTER]-(g:Gene)
-      RETURN c.name AS cluster_name, collect(g.id) AS genes
-    `);
+    const [geneRes, oraRes] = await Promise.all([
+      driver.executeQuery(
+        `
+        MATCH (c:Cluster)<-[:BELONGS_TO_CLUSTER]-(g:Gene)
+        RETURN c.id AS id,
+               c.name AS name,
+               c.color AS color,
+               c.order AS ord,
+               c.markov_time AS markov_time,
+               c.pval_threshold AS pval_threshold,
+               c.background_mode AS background_mode,
+               c.annotated_only AS annotated_only,
+               collect(g.id) AS genes
+        ORDER BY coalesce(c.order, 9999), c.name
+        `,
+        {},
+        { routing: neo4j.routing.READ }
+      ),
+      driver.executeQuery(
+        `
+        MATCH (c:Cluster)-[r:ENRICHED_IN]->(t)
+        RETURN c.id AS cluster_id,
+               r.source AS source,
+               coalesce(t.id, t.bincode) AS term_id,
+               coalesce(t.name, t.title, t.id, t.bincode) AS term_name,
+               r.overlap AS overlap,
+               r.query_size AS query_size,
+               r.term_size AS term_size,
+               r.background_size AS background_size,
+               r.fold AS fold,
+               r.p_value AS p_value,
+               r.p_adj AS p_adj
+        `,
+        {},
+        { routing: neo4j.routing.READ }
+      ),
+    ]);
 
-    const clusters = result.records.map((r) => ({
-      name: r.get("cluster_name"),
-      genes: r.get("genes"),
-    }));
+    const termsByCluster = new Map();
+    for (const r of oraRes.records) {
+      const cid = r.get("cluster_id");
+      const source = r.get("source");
+      const rawName = r.get("term_name");
+      const name = source === "KEGG" ? cleanKeggName(rawName) : rawName;
+      const term = {
+        termId: r.get("term_id"),
+        name,
+        source,
+        overlap: toNum(r.get("overlap")),
+        querySize: toNum(r.get("query_size")),
+        termSize: toNum(r.get("term_size")),
+        backgroundSize: toNum(r.get("background_size")),
+        foldEnrichment: Number(r.get("fold")),
+        pValue: Number(r.get("p_value")),
+        pAdj: Number(r.get("p_adj")),
+        genes: null, // Lazily fetched via /api/analyze/term-genes if expanded
+      };
+      if (!termsByCluster.has(cid)) termsByCluster.set(cid, []);
+      termsByCluster.get(cid).push(term);
+    }
 
-    res.json({ clusters });
+    let meta = null;
+    const clusters = geneRes.records.map((r, idx) => {
+      const id = r.get("id") || `db_${idx + 1}`;
+      const genes = r.get("genes") || [];
+      const terms = termsByCluster.get(id) || [];
+      terms.sort((a, b) => {
+        if (a.pAdj !== b.pAdj) return a.pAdj - b.pAdj;
+        if (b.foldEnrichment !== a.foldEnrichment) return b.foldEnrichment - a.foldEnrichment;
+        return b.overlap - a.overlap;
+      });
+
+      if (!meta) {
+        meta = {
+          markovTime: r.get("markov_time") ?? 1.5,
+          pvalThreshold: r.get("pval_threshold") ?? 0.05,
+          backgroundMode: r.get("background_mode") || "network",
+          annotatedOnly: r.get("annotated_only") !== false,
+        };
+      }
+
+      return {
+        id,
+        name: r.get("name"),
+        color: r.get("color") || null,
+        order: toNum(r.get("ord")) ?? idx + 1,
+        size: genes.length,
+        genes,
+        termsCount: terms.length,
+        topTerm: terms.length > 0 ? terms[0] : null,
+        terms,
+      };
+    });
+
+    res.json({ clusters, meta });
   } catch (error) {
     console.error("Cluster fetch error:", error);
     res.status(500).json({ error: "Failed to retrieve functional clusters." });
-  } finally {
-    await session.close();
   }
 });
 
@@ -619,6 +845,63 @@ app.post("/api/network/nodes/batch", async (req, res) => {
     res.status(500).json({ error: "Failed to retrieve batch node details." });
   } finally {
     await session.close();
+  }
+});
+
+/**
+ * POST /api/analyze/community-discovery
+ * Runs Infomap community detection + Hypergeometric ORA (BH-FDR) on the currently visible subgraph.
+ * Uses a dedicated higher JSON body limit to support large networks (up to ~825k edges).
+ */
+app.post(
+  "/api/analyze/community-discovery",
+  heavyQueryLimiter,
+  async (req, res) => {
+    try {
+      const result = await runCommunityDiscovery(driver, req.body || {});
+      res.json(result);
+    } catch (error) {
+      const status = error.statusCode || 500;
+      if (status >= 500) {
+        console.error("Community Discovery error:", error);
+      }
+      res.status(status).json({
+        error: error.message || "Community Discovery analysis failed.",
+      });
+    }
+  }
+);
+
+/**
+ * POST /api/analyze/ora
+ * Runs ORA-only (without Infomap) on pre-defined / imported clusters.
+ */
+app.post("/api/analyze/ora", heavyQueryLimiter, async (req, res) => {
+  try {
+    const result = await runOraForClusters(driver, req.body || {});
+    res.json(result);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    if (status >= 500) {
+      console.error("ORA analysis error:", error);
+    }
+    res.status(status).json({
+      error: error.message || "ORA analysis failed.",
+    });
+  }
+});
+
+/**
+ * POST /api/analyze/term-genes
+ * Lazily resolves exact overlapping graph gene IDs for a DB-loaded cluster term.
+ */
+app.post("/api/analyze/term-genes", async (req, res) => {
+  try {
+    const result = await getOverlapGenesForTerm(driver, req.body || {});
+    res.json(result);
+  } catch (error) {
+    console.error("Term genes lookup error:", error);
+    res.status(500).json({ error: "Failed to resolve term overlap genes." });
   }
 });
 

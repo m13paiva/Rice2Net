@@ -19,7 +19,18 @@ document.head.appendChild(clusterStyle);
  * Updates cluster legend availability state based on filtering and custom import status.
  */
 window.updateClusterAvailability = function () {
-  if (!window.CLUSTERS_ENABLED) {
+  if (
+    (CLUSTER_STATE.source === "discovered" || CLUSTER_STATE.source === "imported") &&
+    CLUSTER_STATE.legend.length > 0
+  ) {
+    window.CLUSTERS_ENABLED = true;
+    CLUSTER_STATE.isAvailable = true;
+    document.body.classList.remove("hide-clusters");
+    if (typeof window.renderClusterLegend === "function") window.renderClusterLegend();
+    return;
+  }
+
+  if (!window.CLUSTERS_ENABLED || CLUSTER_STATE.legend.length === 0) {
     CLUSTER_STATE.isAvailable = false;
     document.body.classList.add("hide-clusters");
     if (CLUSTER_STATE.active.size > 0) CLUSTER_STATE.active.clear();
@@ -99,7 +110,7 @@ window.isNodeInteractive = function (n) {
 
 /**
  * Rebuilds the spatial quadtree containing only currently visible/interactive nodes
- * so hidden or IRP-filtered nodes cannot be hovered, clicked, or block underlying edges.
+ * so hidden or Z-Score-filtered nodes cannot be hovered, clicked, or block underlying edges.
  */
 window.rebuildInteractiveQuadtree = function () {
   if (typeof d3 === "undefined") return;
@@ -118,10 +129,12 @@ window.rebuildInteractiveQuadtree = function () {
 };
 
 /**
- * Applies IRP threshold filtering and target gene isolation to update active graph nodes and links.
+ * Applies Z-Score threshold filtering (when enabled) and target gene isolation
+ * to update active graph nodes and links.
  */
 window.applyEdgeFilter = function () {
-  const threshold = IRP_STATE.threshold;
+  const zEnabled = typeof ZSCORE_STATE !== "undefined" && ZSCORE_STATE.enabled;
+  const threshold = zEnabled ? ZSCORE_STATE.threshold : -Infinity;
 
   // Clear stale hover state so filtered-out edges/nodes cannot stay highlighted or clicked
   if (typeof HOVERED_EDGE !== "undefined") HOVERED_EDGE = null;
@@ -150,8 +163,13 @@ window.applyEdgeFilter = function () {
   const nextLinks = [];
   for (let i = 0; i < sourceLinks.length; i++) {
     const l = sourceLinks[i];
-    const score = l.irp !== undefined && l.irp !== null ? l.irp : 0;
-    if (score < threshold) continue;
+    if (zEnabled) {
+      const zVal =
+        l.z_score !== undefined && l.z_score !== null && l.z_score !== ""
+          ? Number(l.z_score)
+          : null;
+      if (zVal === null || !Number.isFinite(zVal) || zVal < threshold) continue;
+    }
 
     const sId = String(l.source?.id || l.source);
     const tId = String(l.target?.id || l.target);
@@ -166,7 +184,7 @@ window.applyEdgeFilter = function () {
       source: sNode,
       target: tNode,
       weight: l.weight,
-      irp: l.irp !== undefined && l.irp !== null ? l.irp : null,
+      z_score: l.z_score !== undefined && l.z_score !== null ? l.z_score : null,
       sign: l.sign || null,
       has_interacts: l.has_interacts !== undefined ? l.has_interacts : true,
       has_regulates: l.has_regulates || false,
@@ -188,6 +206,7 @@ window.applyEdgeFilter = function () {
   const isTargeted = targetSet.size > 0;
 
   const nextNodes = [];
+  let hasUnplacedRogue = false;
   for (let i = 0; i < sourceNodes.length; i++) {
     const n = sourceNodes[i];
     const idStr = String(n.id);
@@ -196,26 +215,29 @@ window.applyEdgeFilter = function () {
     if (deg > 0) {
       n.isRogue = false;
       n.dashed = false;
-      nextNodes.push(n);
-    } else if (!isTargeted) {
+    } else {
       n.isRogue = true;
       n.dashed = true;
-      nextNodes.push(n);
-    } else if (targetSet.has(idStr)) {
-      n.isRogue = true;
-      n.dashed = true;
-      nextNodes.push(n);
+      if (n.x == null || n.y == null) hasUnplacedRogue = true;
     }
+    nextNodes.push(n);
   }
   nodes = nextNodes;
 
+  if (hasUnplacedRogue && typeof window.positionUnplacedRogueNodes === "function") {
+    window.positionUnplacedRogueNodes();
+  }
+
   if (typeof updateVisualProps === "function") updateVisualProps();
 
-  window.IS_FILTERED_NETWORK = (nodes.length < RAW_DATA.nodes.length) || isTargeted || threshold > 0;
+  const isZThresholdChanged =
+    zEnabled && Math.abs(threshold - ZSCORE_STATE.defaultThreshold) > 1e-6;
+  window.IS_FILTERED_NETWORK =
+    RAW_DATA.workingLinks !== null || isTargeted || isZThresholdChanged;
   window.updateClusterAvailability();
 
   if (
-    threshold === 0 &&
+    !zEnabled &&
     sourceLinks === RAW_DATA.links &&
     links.length === RAW_DATA.links.length &&
     RAW_DATA.fullAdjacency &&
@@ -245,12 +267,63 @@ window.applyEdgeFilter = function () {
 };
 
 /**
- * Batches and fetches regulation relationship directions via RICE2NET_API.
+ * Resets all cached regulatory annotations on active, working, raw, and embedded edges.
  */
-window.fetchRegulationEdges = async function () {
-  const pendingEdges = links.filter((l) => !l.reg_matched);
+window.resetAllRegulationEdges = function () {
+  const clearArr = (arr) => {
+    if (!Array.isArray(arr)) return;
+    for (let i = 0; i < arr.length; i++) {
+      const e = arr[i];
+      if (!e) continue;
+      e.has_regulates = false;
+      e.directions = null;
+      e.reg_matched = false;
+      delete e.clicked_src;
+      delete e.clicked_tgt;
+    }
+  };
+  clearArr(links);
+  if (RAW_DATA) {
+    clearArr(RAW_DATA.links);
+    clearArr(RAW_DATA.workingLinks);
+    clearArr(RAW_DATA.embeddedLinks);
+  }
+  if (typeof HOVERED_EDGE !== "undefined") {
+    HOVERED_EDGE = null;
+  }
+};
+
+/**
+ * Batches and fetches promoter-binding motif regulatory directions via RICE2NET_API
+ * strictly on edges connecting currently visible nodes, filtered by selected motif sources.
+ * @param {Array<string>|null} sources - Selected motif database source names.
+ * @param {boolean} resetPrevious - Forget previous regulation results before scanning (default true).
+ * @returns {Promise<{ matchedEdgesCount: number, scannedEdgesCount: number }>}
+ */
+window.fetchRegulationEdges = async function (sources = null, resetPrevious = true) {
+  if (resetPrevious) {
+    window.resetAllRegulationEdges();
+  }
+
+  // Strictly select edges whose endpoints are currently visible on the graph
+  const visibleNodeSet = new Set();
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (!n || n.isDummy || String(n.id).startsWith("__dummy")) continue;
+    if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
+    if (n.color === CONFIG.visuals.colors.Transparent) continue;
+    visibleNodeSet.add(String(n.id));
+  }
+
+  const pendingEdges = links.filter((l) => {
+    if (!resetPrevious && l.reg_matched) return false;
+    const sId = String(l.source?.id || l.source);
+    const tId = String(l.target?.id || l.target);
+    return visibleNodeSet.has(sId) && visibleNodeSet.has(tId);
+  });
+
   if (pendingEdges.length === 0) {
-    return;
+    return { matchedEdgesCount: 0, scannedEdgesCount: 0 };
   }
 
   const loader = document.getElementById("loader");
@@ -259,12 +332,11 @@ window.fetchRegulationEdges = async function () {
 
   if (loader) loader.style.display = "block";
   if (progressBar) progressBar.style.width = "0%";
-  if (loaderText) loaderText.innerText = "FETCHING REGULATION DATA... 0%";
+  if (loaderText) loaderText.innerText = "FETCHING PROMOTER-BINDING MOTIF OCCURRENCES... 0%";
 
   const batchSize = 500;
   const totalBatches = Math.ceil(pendingEdges.length / batchSize);
 
-  // Map queried (RAP) pair key -> active link(s) + mapping back to active node IDs
   const pendingByQueryKey = new Map();
   pendingEdges.forEach((l) => {
     const sNodeId = String(l.source?.id || l.source);
@@ -282,7 +354,6 @@ window.fetchRegulationEdges = async function () {
     });
   });
 
-  // Helper to update matching raw edge in RAW_DATA.links without building a 1.77M-entry Map
   const fullAdj = getFullAdjacency();
   const findRawEdge = (sId, tId) => {
     const neighbors = fullAdj.get(sId);
@@ -295,6 +366,8 @@ window.fetchRegulationEdges = async function () {
     return null;
   };
 
+  let matchedEdgesCount = 0;
+
   try {
     for (let i = 0; i < totalBatches; i++) {
       const start = i * batchSize;
@@ -306,7 +379,7 @@ window.fetchRegulationEdges = async function () {
         t: String(l.target?.rap_id || l.target?.id || l.target),
       }));
 
-      const data = await window.RICE2NET_API.checkRegulates(pairs);
+      const data = await window.RICE2NET_API.checkRegulates(pairs, sources);
 
       (data.edges || []).forEach((e) => {
         const key = `${e.original_s}-${e.original_t}`;
@@ -328,6 +401,7 @@ window.fetchRegulationEdges = async function () {
           });
 
           const hasReg = mappedDirs.length > 0;
+          if (hasReg && !edge.has_regulates) matchedEdgesCount++;
           edge.has_regulates = hasReg;
           edge.directions = mappedDirs;
 
@@ -349,7 +423,7 @@ window.fetchRegulationEdges = async function () {
 
       if (loaderText && progressBar) {
         const pct = Math.round(((i + 1) / totalBatches) * 100);
-        loaderText.innerText = `FETCHING REGULATION DATA... ${pct}%`;
+        loaderText.innerText = `FETCHING PROMOTER-BINDING MOTIF OCCURRENCES... ${pct}%`;
         progressBar.style.width = `${pct}%`;
       }
 
@@ -359,21 +433,24 @@ window.fetchRegulationEdges = async function () {
     }
 
     if (typeof window.draw === "function") requestAnimationFrame(window.draw);
-
+    return { matchedEdgesCount, scannedEdgesCount: pendingEdges.length };
   } catch (e) {
-    alert(`Regulation data request failed: ${e.message}`);
+    throw new Error(`Promoter-binding motif search failed: ${e.message}`);
   } finally {
     if (loader) loader.style.display = "none";
   }
 };
 
 /**
- * Loads functional cluster definitions and gene assignments via RICE2NET_API.
+ * Loads precomputed global functional cluster definitions, colors, and ORA terms via RICE2NET_API.
  */
 async function loadClusters() {
   CLUSTER_STATE.active.clear();
   CLUSTER_STATE.legend = [];
   CLUSTER_STATE.data.clear();
+  if (CLUSTER_STATE.byId) CLUSTER_STATE.byId.clear();
+  CLUSTER_STATE.source = null;
+  CLUSTER_STATE.lastStats = null;
 
   if (!window.CLUSTERS_ENABLED) {
     window.updateClusterAvailability();
@@ -381,22 +458,58 @@ async function loadClusters() {
   }
 
   const loaderText = document.getElementById("loader-text");
-  if (loaderText) loaderText.innerText = "LOADING CLUSTERS FROM DB...";
+  if (loaderText) loaderText.innerText = "LOADING CLUSTERS...";
 
   try {
     const data = await window.RICE2NET_API.getClusters();
-    if (data && data.clusters) {
+    if (data && Array.isArray(data.clusters) && data.clusters.length > 0) {
+      CLUSTER_STATE.source = "db";
+      const meta = data.meta || {};
+      CLUSTER_STATE.lastStats = {
+        totalModulesDetected: data.clusters.length,
+        enrichedClustersCount: data.clusters.length,
+        markovTime: meta.markovTime ?? 1.5,
+        pvalThreshold: meta.pvalThreshold ?? 0.05,
+        background: {
+          mode: meta.backgroundMode || "network",
+          annotatedOnly: meta.annotatedOnly !== false,
+          rawBackgroundSize: (RAW_DATA && RAW_DATA.nodes ? RAW_DATA.nodes.length : nodes.length) || 0,
+        },
+      };
+
       data.clusters.forEach((cluster, index) => {
+        const id = String(cluster.id || `db_${index + 1}`);
         const name = cluster.name;
-        const color = CONFIG.visuals.colors.Clusters[index % CONFIG.visuals.colors.Clusters.length];
+        const hasSavedColor = Boolean(cluster.color);
+        const color =
+          cluster.color ||
+          CONFIG.visuals.colors.Clusters[index % CONFIG.visuals.colors.Clusters.length];
+        const geneList = Array.isArray(cluster.genes) ? cluster.genes.map(String) : [];
+        const termList = Array.isArray(cluster.terms) ? cluster.terms : [];
 
-        CLUSTER_STATE.active.add(name);
-        CLUSTER_STATE.legend.push({ name, color, count: cluster.genes.length });
+        const entry = {
+          id,
+          name,
+          color,
+          customColor: hasSavedColor,
+          count: geneList.length,
+          genes: geneList,
+          topTerm: cluster.topTerm || (termList.length > 0 ? termList[0] : null),
+          termsCount: cluster.termsCount ?? termList.length,
+          terms: termList,
+        };
+        CLUSTER_STATE.active.add(id);
+        CLUSTER_STATE.legend.push(entry);
+        if (CLUSTER_STATE.byId) CLUSTER_STATE.byId.set(id, entry);
 
-        cluster.genes.forEach(geneId => {
-          CLUSTER_STATE.data.set(String(geneId), name);
+        geneList.forEach((geneId) => {
+          CLUSTER_STATE.data.set(geneId, id);
         });
       });
+
+      if (typeof window.updateCommunityDiscoverySummary === "function") {
+        window.updateCommunityDiscoverySummary();
+      }
     }
   } catch (e) {
     console.error("Cluster API load failed:", e);
@@ -544,7 +657,7 @@ async function main() {
 
   if (document.body && document.body.classList) document.body.classList.add("is-loading");
   if (loader) loader.style.display = "block";
-  if (loaderText) loaderText.innerText = "FETCHING LIGHTWEIGHT TOPOLOGY...";
+  if (loaderText) loaderText.innerText = "FETCHING NETWORK TOPOLOGY...";
   if (progressBar) progressBar.style.width = "10%";
   await new Promise(r => setTimeout(r, 50));
 
@@ -558,22 +671,26 @@ async function main() {
     RAW_DATA.nodes = RAW_DATA.embeddedNodes;
     RAW_DATA.links = RAW_DATA.embeddedLinks;
 
-    nodes = RAW_DATA.nodes.map((n) => ({ ...n }));
+    nodes = RAW_DATA.nodes.map((n) => ({
+      ...n,
+      _hasLayoutPos: n.x !== null && n.x !== undefined && n.y !== null && n.y !== undefined,
+    }));
     RAW_DATA.workingNodes = nodes;
     RAW_DATA.workingLinks = null;
 
     window.IS_IMPORTED_NETWORK = false;
     window.IS_FILTERED_NETWORK = false;
+    window.CLUSTERS_ENABLED = true;
 
     if (window.CLUSTERS_ENABLED && typeof loadClusters === "function") {
-        if (loaderText) loaderText.innerText = "FETCHING CLUSTERS...";
+        if (loaderText) loaderText.innerText = "LOADING CLUSTERS...";
         if (progressBar) progressBar.style.width = "40%";
         await loadClusters();
     } else if (typeof window.updateClusterAvailability === "function") {
         window.updateClusterAvailability();
     }
 
-    if (loaderText) loaderText.innerText = "PREPARING METADATA...";
+    if (loaderText) loaderText.innerText = "PREPARING NETWORK METADATA...";
     if (progressBar) progressBar.style.width = "70%";
 
     nodes.forEach((n) => {
@@ -591,30 +708,46 @@ async function main() {
 
     if (typeof cacheMetaSnapshot === "function") cacheMetaSnapshot();
 
-    const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
-    links = RAW_DATA.links
-      .map((e) => ({
-        source: nodeMap.get(String(e.source?.id || e.source)),
-        target: nodeMap.get(String(e.target?.id || e.target)),
-        weight:
-          e.weight !== undefined && e.weight !== null
-            ? e.weight
-            : e.value !== undefined && e.value !== null
-            ? e.value
-            : 1,
-        irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
-        sign: e.sign || null,
-        has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
-        has_regulates: e.has_regulates || false,
-        directions: e.directions || null,
-        binds: e.binds || null,
-        reg_matched: !!e.reg_matched,
-      }))
-      .filter((l) => l.source && l.target);
+    // Configure dynamic Z-Score filter bounds (default 1.28 when present, hidden when absent).
+    // When Z-Score filtering is enabled, applyEdgeFilter() materializes only edges >= defaultThreshold
+    // directly from RAW_DATA.links, avoiding redundant multi-million-edge allocations on startup.
+    RAW_DATA.fullAdjacency = null;
+    RAW_DATA._fullAdjacencyLinksRef = null;
 
-    RAW_DATA.adjacency = buildAdjacency(nodes, links);
-    RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
-    RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+    const hasZScore =
+      typeof window.configureZScoreBounds === "function"
+        ? window.configureZScoreBounds(RAW_DATA.links)
+        : false;
+
+    if (hasZScore && typeof window.applyEdgeFilter === "function") {
+      links = [];
+      window.applyEdgeFilter();
+    } else {
+      const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
+      links = RAW_DATA.links
+        .map((e) => ({
+          source: nodeMap.get(String(e.source?.id || e.source)),
+          target: nodeMap.get(String(e.target?.id || e.target)),
+          weight:
+            e.weight !== undefined && e.weight !== null
+              ? e.weight
+              : e.value !== undefined && e.value !== null
+              ? e.value
+              : 1,
+          z_score: e.z_score !== undefined && e.z_score !== null ? e.z_score : null,
+          sign: e.sign || null,
+          has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
+          has_regulates: e.has_regulates || false,
+          directions: e.directions || null,
+          binds: e.binds || null,
+          reg_matched: !!e.reg_matched,
+        }))
+        .filter((l) => l.source && l.target);
+
+      RAW_DATA.adjacency = buildAdjacency(nodes, links);
+      RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
+      RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+    }
 
     if (nodes.length > 0 && nodes.some((n) => n.x !== undefined && n.x !== null)) {
       if (loaderText) loaderText.innerText = "RENDERING...";
@@ -623,7 +756,7 @@ async function main() {
       if (loader) loader.style.display = "none";
       if (document.body && document.body.classList) document.body.classList.remove("is-loading");
     } else {
-      if (loaderText) loaderText.innerText = "PREPARING PHYSICS...";
+      if (loaderText) loaderText.innerText = "INITIALIZING LAYOUT SIMULATION...";
       if (progressBar) progressBar.style.width = "100%";
       await new Promise(r => setTimeout(r, 50));
       if (document.body && document.body.classList) document.body.classList.remove("is-loading");
@@ -631,7 +764,7 @@ async function main() {
     }
   } catch (error) {
     console.error("Failed to fetch initial network.", error);
-    if (loaderText) loaderText.innerText = "Error: Database connection failed";
+    if (loaderText) loaderText.innerText = "Unable to connect to the Rice2Net server.";
     if (document.body && document.body.classList) document.body.classList.remove("is-loading");
   }
 }
@@ -663,7 +796,6 @@ window.revertToEmbeddedNetworkCore = async function () {
   if (targetInput) targetInput.value = "";
   const targetFile = document.getElementById("target-file");
   if (targetFile) targetFile.value = "";
-  if (typeof window.updateIRPControlUI === "function") window.updateIRPControlUI(0);
   if (typeof window.closeDetails === "function") window.closeDetails();
 
   const tooltipEl = document.getElementById("tooltip");
@@ -676,6 +808,22 @@ window.revertToEmbeddedNetworkCore = async function () {
 
   window.IS_IMPORTED_NETWORK = false;
   window.IS_FILTERED_NETWORK = false;
+  // Always reset any in-memory clusters and promoter-binding motif overlays when reverting to the embedded network
+  if (typeof window.resetClustersState === "function") {
+    window.resetClustersState();
+  } else if (typeof window.clearDiscoveredClusters === "function") {
+    window.clearDiscoveredClusters();
+  }
+  if (typeof window.clearPromoterMotifAnalysis === "function") {
+    window.clearPromoterMotifAnalysis(true);
+  } else {
+    if (typeof window.resetAllRegulationEdges === "function") window.resetAllRegulationEdges();
+    if (typeof window.REGULATION_STATE !== "undefined") {
+      window.REGULATION_STATE.isAvailable = false;
+      window.REGULATION_STATE.sources = [];
+      window.REGULATION_STATE.edgeCount = 0;
+    }
+  }
   if (typeof VISIBILITY_STATE !== "undefined") {
     VISIBILITY_STATE.EdgeBoth = 0;
     VISIBILITY_STATE.Rogue = 0;
@@ -716,7 +864,7 @@ window.revertToEmbeddedNetworkCore = async function () {
       RAW_DATA.embeddedNodes.length > 0 &&
       Array.isArray(RAW_DATA.embeddedLinks)
     ) {
-      if (loaderText) loaderText.innerText = "RESTORING EMBEDDED TOPOLOGY...";
+      if (loaderText) loaderText.innerText = "RESTORING REFERENCE NETWORK...";
       if (progressBar) progressBar.style.width = "30%";
       await nextPaint();
 
@@ -724,12 +872,16 @@ window.revertToEmbeddedNetworkCore = async function () {
       RAW_DATA.links = RAW_DATA.embeddedLinks;
       RAW_DATA.dbNodes = RAW_DATA.embeddedNodes;
 
-      nodes = RAW_DATA.nodes.map((n) => ({ ...n }));
+      nodes = RAW_DATA.nodes.map((n) => ({
+      ...n,
+      _hasLayoutPos: n.x !== null && n.x !== undefined && n.y !== null && n.y !== undefined,
+    }));
       RAW_DATA.workingNodes = nodes;
       RAW_DATA.workingLinks = null;
 
+      window.CLUSTERS_ENABLED = true;
       if (window.CLUSTERS_ENABLED && typeof loadClusters === "function") {
-        if (loaderText) loaderText.innerText = "FETCHING CLUSTERS...";
+        if (loaderText) loaderText.innerText = "LOADING CLUSTERS...";
         if (progressBar) progressBar.style.width = "55%";
         await nextPaint();
         await loadClusters();
@@ -737,7 +889,7 @@ window.revertToEmbeddedNetworkCore = async function () {
         window.updateClusterAvailability();
       }
 
-      if (loaderText) loaderText.innerText = "PREPARING METADATA & LINKS...";
+      if (loaderText) loaderText.innerText = "PREPARING NETWORK METADATA...";
       if (progressBar) progressBar.style.width = "75%";
       await nextPaint();
 
@@ -756,30 +908,43 @@ window.revertToEmbeddedNetworkCore = async function () {
 
       if (typeof cacheMetaSnapshot === "function") cacheMetaSnapshot();
 
-      const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
-      links = RAW_DATA.links
-        .map((e) => ({
-          source: nodeMap.get(String(e.source?.id || e.source)),
-          target: nodeMap.get(String(e.target?.id || e.target)),
-          weight:
-            e.weight !== undefined && e.weight !== null
-              ? e.weight
-              : e.value !== undefined && e.value !== null
-              ? e.value
-              : 1,
-          irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
-          sign: e.sign || null,
-          has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
-          has_regulates: e.has_regulates || false,
-          directions: e.directions || null,
-          binds: e.binds || null,
-          reg_matched: !!e.reg_matched,
-        }))
-        .filter((l) => l.source && l.target);
+      RAW_DATA.fullAdjacency = null;
+      RAW_DATA._fullAdjacencyLinksRef = null;
 
-      RAW_DATA.adjacency = buildAdjacency(nodes, links);
-      RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
-      RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+      const hasZScore =
+        typeof window.configureZScoreBounds === "function"
+          ? window.configureZScoreBounds(RAW_DATA.links)
+          : false;
+
+      if (hasZScore && typeof window.applyEdgeFilter === "function") {
+        links = [];
+        window.applyEdgeFilter();
+      } else {
+        const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
+        links = RAW_DATA.links
+          .map((e) => ({
+            source: nodeMap.get(String(e.source?.id || e.source)),
+            target: nodeMap.get(String(e.target?.id || e.target)),
+            weight:
+              e.weight !== undefined && e.weight !== null
+                ? e.weight
+                : e.value !== undefined && e.value !== null
+                ? e.value
+                : 1,
+            z_score: e.z_score !== undefined && e.z_score !== null ? e.z_score : null,
+            sign: e.sign || null,
+            has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
+            has_regulates: e.has_regulates || false,
+            directions: e.directions || null,
+            binds: e.binds || null,
+            reg_matched: !!e.reg_matched,
+          }))
+          .filter((l) => l.source && l.target);
+
+        RAW_DATA.adjacency = buildAdjacency(nodes, links);
+        RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
+        RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+      }
 
       if (typeof updateClusterAvailability === "function") updateClusterAvailability();
 

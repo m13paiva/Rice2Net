@@ -212,8 +212,16 @@ window.renderEdgeLegend = function () {
 
   const items = [
     { label: "Coexpression", key: "EdgeCoexp", icon: `<div style="width:20px; height:2px; background:${edgeColor};"></div>` },
-    { label: "Regulation", key: "EdgeBoth", icon: `<div style="display:flex; align-items:center;"><div style="width:14px; height:2px; background:${edgeColor};"></div><div style="width:0; height:0; border-top:4px solid transparent; border-bottom:4px solid transparent; border-left:6px solid ${edgeColor};"></div></div>` },
   ];
+
+  // Regulation edges only appear in the legend after running Analyze -> Promoter-Binding Motifs
+  if (typeof window.REGULATION_STATE !== "undefined" && window.REGULATION_STATE.isAvailable) {
+    items.push({
+      label: "Regulation",
+      key: "EdgeBoth",
+      icon: `<div style="display:flex; align-items:center;"><div style="width:14px; height:2px; background:${edgeColor};"></div><div style="width:0; height:0; border-top:4px solid transparent; border-bottom:4px solid transparent; border-left:6px solid ${edgeColor};"></div></div>`,
+    });
+  }
 
   container.innerHTML =
     `<div style="font-size:0.8rem; color:#888; margin-bottom:4px; font-weight:bold; text-align:right; padding-right:4px;">EDGE TYPES</div>` +
@@ -234,7 +242,67 @@ window.renderEdgeLegend = function () {
 };
 
 /**
- * Renders functional cluster module legend list.
+ * Helper to safely escape HTML characters in cluster names.
+ */
+function escapeClusterHtml(str) {
+  return String(str == null ? "" : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Starts inline renaming of a cluster inside the floating cluster legend.
+ * @param {string} clusterId - Stable cluster identifier.
+ */
+window.startRenameClusterInLegend = function (clusterId) {
+  const id = String(clusterId);
+  const cluster =
+    (CLUSTER_STATE.byId && CLUSTER_STATE.byId.get(id)) ||
+    CLUSTER_STATE.legend.find((c) => (c.id || c.name) === id);
+  if (!cluster) return;
+
+  const span = document.querySelector(`[data-cluster-name-id="${id}"]`);
+  if (!span || !span.parentNode) return;
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "cluster-name-edit";
+  input.value = cluster.name;
+
+  let committed = false;
+  const commit = () => {
+    if (committed) return;
+    committed = true;
+    const nextName = input.value.trim();
+    if (nextName && typeof window.renameCluster === "function") {
+      window.renameCluster(id, nextName);
+    } else {
+      window.renderClusterLegend();
+    }
+  };
+
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") commit();
+    else if (e.key === "Escape") {
+      committed = true;
+      window.renderClusterLegend();
+    }
+  });
+  input.addEventListener("blur", commit);
+
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+};
+
+/**
+ * Renders functional cluster module legend list with live color picker, rename,
+ * ORA inspection, visibility toggle, and delete controls.
  */
 window.renderClusterLegend = function () {
   const container = document.getElementById("legend-clusters");
@@ -252,7 +320,7 @@ window.renderClusterLegend = function () {
   container.style.borderTop = "1px solid #444";
 
   const existingDetails = container.querySelector("details");
-  const isOpen = existingDetails && existingDetails.hasAttribute("open") ? "open" : "";
+  const isOpen = !existingDetails || existingDetails.hasAttribute("open") ? "open" : "";
   const allActive = CLUSTER_STATE.active.size === CLUSTER_STATE.legend.length;
 
   const headerIcon = allActive
@@ -264,34 +332,61 @@ window.renderClusterLegend = function () {
       <summary style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-size:0.8rem; color:#888; font-weight:bold; cursor:pointer; list-style:none; user-select:none; pointer-events:auto;">
         <div style="display:flex; align-items:center; gap:5px;">
           <svg class="dropdown-arrow" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="transition: transform 0.2s;"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          <span>CLUSTERS</span>
+          <span>CLUSTERS (${CLUSTER_STATE.legend.length})</span>
         </div>
-        <div onclick="event.preventDefault(); event.stopPropagation(); window.toggleAllClusters()" style="cursor:pointer; color:#bbb; pointer-events:auto;" title="${allActive ? "Hide All" : "Show All"}">${headerIcon}</div>
+        <div onclick="event.preventDefault(); event.stopPropagation(); window.toggleAllClusters()" style="cursor:pointer; color:#bbb; pointer-events:auto; display:flex; align-items:center;" title="${allActive ? "Hide All" : "Show All"}">${headerIcon}</div>
       </summary>
-      <div style="display:flex; flex-direction:column; gap:4px; margin-top:8px; padding-left:17px; pointer-events:auto;">
+      <div style="display:flex; flex-direction:column; gap:2px; margin-top:6px; pointer-events:auto;">
   `;
 
-  const htmlRows = [...CLUSTER_STATE.legend]
-    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+  const htmlRows = CLUSTER_STATE.legend
     .map((c) => {
-      const isActive = CLUSTER_STATE.active.has(c.name);
+      const cid = String(c.id || c.name);
+      const isActive = CLUSTER_STATE.active.has(cid);
       const opacity = isActive ? "1" : "0.4";
-      const icon = isActive
-        ? `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`
-        : `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M1 1l22 22"></path><path d="M12 4c1.66 0 3.2.46 4.54 1.25"></path></svg>`;
+      const safeName = escapeClusterHtml(c.name);
+      const safeColor = escapeClusterHtml(c.color);
+      const eyeIcon = isActive
+        ? `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`
+        : `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M1 1l22 22"></path><path d="M12 4c1.66 0 3.2.46 4.54 1.25"></path></svg>`;
+
+      const renameIcon = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>`;
+      const oraIcon = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>`;
+      const deleteIcon = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+
+      const hasTerms = Array.isArray(c.terms) && c.terms.length > 0;
 
       return `
-      <div style="display:grid; grid-template-columns: 24px 1fr 30px; align-items:center; font-size:0.85rem; opacity:${opacity}; transition: opacity 0.2s; cursor:default; pointer-events:auto; margin-bottom: 6px;">
-        <div style="display:flex; align-items:center; justify-content:center;">
-          <div style="width:10px; height:10px; border-radius:0; background:${c.color};"></div>
-        </div>
-        <span style="padding-left: 8px;">${c.name}</span>
-        <div onclick="event.stopPropagation(); window.toggleCluster('${c.name}')" style="cursor:pointer; display:flex; align-items:center; justify-content:center; color:#bbb; pointer-events:auto;" title="Toggle Visibility">
-          ${icon}
-        </div>
+      <div class="cluster-legend-row" style="opacity:${opacity};">
+        <input
+          type="color"
+          class="cluster-color-input"
+          data-cluster-color-id="${cid}"
+          value="${safeColor}"
+          title="Change cluster color"
+          onclick="event.stopPropagation();"
+          oninput="event.stopPropagation(); window.setClusterColor('${cid}', this.value, false)"
+          onchange="event.stopPropagation(); window.setClusterColor('${cid}', this.value, true)"
+        />
+        <span
+          class="cluster-legend-name"
+          data-cluster-name-id="${cid}"
+          title="${safeName} (${c.count} genes) — Double-click to rename"
+          ondblclick="event.stopPropagation(); window.startRenameClusterInLegend('${cid}')"
+          onclick="event.stopPropagation(); ${hasTerms ? `window.openClusterOraModal('${cid}')` : `window.toggleCluster('${cid}')`}"
+        >${safeName}<span class="cluster-legend-count">(${c.count})</span></span>
+        <button type="button" class="cluster-icon-btn" title="Rename cluster" onclick="event.stopPropagation(); window.startRenameClusterInLegend('${cid}')">${renameIcon}</button>
+        ${
+          hasTerms
+            ? `<button type="button" class="cluster-icon-btn" title="View ORA terms (${c.terms.length})" onclick="event.stopPropagation(); window.openClusterOraModal('${cid}')">${oraIcon}</button>`
+            : ""
+        }
+        <button type="button" class="cluster-icon-btn" title="Toggle cluster highlight" onclick="event.stopPropagation(); window.toggleCluster('${cid}')">${eyeIcon}</button>
+        <button type="button" class="cluster-icon-btn cluster-del-btn" title="Delete cluster" onclick="event.stopPropagation(); window.deleteCluster('${cid}')">${deleteIcon}</button>
       </div>
     `;
-    }).join("");
+    })
+    .join("");
 
   container.innerHTML = headerHtml + htmlRows + `</div></details>`;
 
@@ -299,6 +394,7 @@ window.renderClusterLegend = function () {
     const style = document.createElement("style");
     style.id = "cluster-style";
     style.innerHTML = `
+      #legend-clusters details > summary::after { content: none !important; }
       details > summary::-webkit-details-marker { display: none; }
       details[open] .dropdown-arrow { transform: rotate(180deg); }
     `;
@@ -330,16 +426,10 @@ window.toggleType = function (type) {
 };
 
 /**
- * Toggles edge type visibility (Coexpression or Regulation).
+ * Toggles edge type visibility (Coexpression or Regulation) without triggering DB queries.
  * @param {string} key - Edge visibility key ("EdgeCoexp" or "EdgeBoth").
  */
-window.toggleEdgeType = async function (key) {
-  if (key === "EdgeBoth") {
-    let current = VISIBILITY_STATE[key] ?? 0;
-    if (current === 0) {
-      await window.fetchRegulationEdges();
-    }
-  }
+window.toggleEdgeType = function (key) {
   let current = VISIBILITY_STATE[key] ?? (key === "EdgeCoexp" ? 2 : 0);
   VISIBILITY_STATE[key] = current === 2 ? 0 : 2;
   window.reapplyColors();
@@ -347,11 +437,12 @@ window.toggleEdgeType = async function (key) {
 
 /**
  * Toggles active state for a functional cluster module.
- * @param {string} name - Cluster module name.
+ * @param {string} clusterId - Cluster identifier (or legacy name).
  */
-window.toggleCluster = function (name) {
-  if (CLUSTER_STATE.active.has(name)) CLUSTER_STATE.active.delete(name);
-  else CLUSTER_STATE.active.add(name);
+window.toggleCluster = function (clusterId) {
+  const key = String(clusterId);
+  if (CLUSTER_STATE.active.has(key)) CLUSTER_STATE.active.delete(key);
+  else CLUSTER_STATE.active.add(key);
   window.reapplyColors();
 };
 
@@ -364,7 +455,7 @@ window.toggleAllClusters = function () {
   if (current === total) CLUSTER_STATE.active.clear();
   else {
     CLUSTER_STATE.active.clear();
-    CLUSTER_STATE.legend.forEach((c) => CLUSTER_STATE.active.add(c.name));
+    CLUSTER_STATE.legend.forEach((c) => CLUSTER_STATE.active.add(String(c.id || c.name)));
   }
   window.reapplyColors();
 };

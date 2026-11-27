@@ -157,14 +157,22 @@
     const regPairMap = new Map();
     const bindsPairMap = new Map();
 
-    const addDirection = (src, tgt) => {
+    const addDirection = (src, tgt, dirSources = null) => {
       const a = String(src);
       const b = String(tgt);
       const pairKey = a < b ? `${a}|${b}` : `${b}|${a}`;
       if (!regPairMap.has(pairKey)) regPairMap.set(pairKey, []);
       const list = regPairMap.get(pairKey);
-      if (!list.some((d) => d.src === a && d.tgt === b)) {
-        list.push({ src: a, tgt: b });
+      const existing = list.find((d) => d.src === a && d.tgt === b);
+      if (!existing) {
+        const entry = { src: a, tgt: b };
+        if (Array.isArray(dirSources) && dirSources.length > 0) {
+          entry.sources = dirSources;
+        }
+        list.push(entry);
+      } else if (Array.isArray(dirSources) && dirSources.length > 0) {
+        const merged = new Set([...(existing.sources || []), ...dirSources]);
+        existing.sources = Array.from(merged);
       }
     };
 
@@ -172,17 +180,17 @@
       raw.edges.forEach((e) => {
         if (Array.isArray(e.directions)) {
           e.directions.forEach((d) => {
-            if (d && d.src && d.tgt) addDirection(d.src, d.tgt);
+            if (d && d.src && d.tgt) addDirection(d.src, d.tgt, d.sources);
           });
         } else if (e.src && e.tgt) {
-          addDirection(e.src, e.tgt);
+          addDirection(e.src, e.tgt, e.sources);
         }
       });
     } else if (raw && raw.directions && typeof raw.directions === "object") {
       Object.values(raw.directions).forEach((dirs) => {
         if (Array.isArray(dirs)) {
           dirs.forEach((d) => {
-            if (d && d.src && d.tgt) addDirection(d.src, d.tgt);
+            if (d && d.src && d.tgt) addDirection(d.src, d.tgt, d.sources);
           });
         }
       });
@@ -208,16 +216,58 @@
   }
 
   /**
+   * Unpacks compact-v1 integer-indexed edge tuples [sIdx, tIdx, weight, z_score, signCode]
+   * in-place to minimize transient peak browser memory on multi-million-edge networks.
+   */
+  function unpackCompactNetwork(data) {
+    if (
+      !data ||
+      data.format !== "compact-v1" ||
+      !Array.isArray(data.nodes) ||
+      !Array.isArray(data.edges)
+    ) {
+      return data;
+    }
+
+    const nodeIds = new Array(data.nodes.length);
+    for (let i = 0; i < data.nodes.length; i++) {
+      nodeIds[i] = data.nodes[i].id;
+    }
+
+    const edges = data.edges;
+    for (let i = 0; i < edges.length; i++) {
+      const tuple = edges[i];
+      if (!Array.isArray(tuple)) continue;
+      const signCode = tuple[4];
+      edges[i] = {
+        source: nodeIds[tuple[0]],
+        target: nodeIds[tuple[1]],
+        weight: tuple[2],
+        z_score: tuple[3],
+        sign: signCode === 1 ? "+" : signCode === -1 ? "-" : null,
+        has_interacts: true,
+        has_regulates: false,
+      };
+    }
+
+    delete data.format;
+    return data;
+  }
+
+  /**
    * 1. Fetch initial network topology (nodes + edges)
    */
   async function initNetwork() {
     if (getMode() === "static") {
       if (!staticCache.network) {
-        staticCache.network = await fetchJson(`${getDemoBase()}/network.json`);
+        staticCache.network = unpackCompactNetwork(
+          await fetchJson(`${getDemoBase()}/network.json`)
+        );
       }
       return staticCache.network;
     }
-    return fetchJson(`${getApiBase()}/api/network/init`);
+    const raw = await fetchJson(`${getApiBase()}/api/network/init`);
+    return unpackCompactNetwork(raw);
   }
 
   /**
@@ -313,28 +363,61 @@
     throw err;
   }
 
+  const STATIC_MOTIF_SOURCE_ALIAS = {
+    PlantTFDB: "PlantTFDB",
+    "JASPAR Core": "JASPAR Core",
+    JASPAR_Core: "JASPAR Core",
+    "JASPAR Unvalidated": "JASPAR Unvalidated",
+    JASPAR_Unvalidated: "JASPAR Unvalidated",
+    "CIS-BP": "CIS-BP",
+    CIS_BP: "CIS-BP",
+  };
+
+  function normalizeStaticSourceSet(sources) {
+    if (!Array.isArray(sources)) return null;
+    const set = new Set();
+    sources.forEach((s) => {
+      const canon = STATIC_MOTIF_SOURCE_ALIAS[String(s || "").trim()];
+      if (canon) set.add(canon);
+    });
+    return set;
+  }
+
   /**
-   * 5. Query regulatory directions for a batch of undirected gene pairs
+   * 5. Query regulatory directions for a batch of undirected gene pairs (optionally filtered by motif sources)
    */
-  async function checkRegulates(pairs) {
+  async function checkRegulates(pairs, sources = null) {
     if (!Array.isArray(pairs) || pairs.length === 0) {
       return { edges: [] };
     }
 
     if (getMode() === "static") {
-      const { regPairMap } = await loadStaticRegulation();
+      const { regPairMap, bindsPairMap } = await loadStaticRegulation();
+      const sourceSet = normalizeStaticSourceSet(sources);
+      if (sourceSet && sourceSet.size === 0) {
+        return { edges: [] };
+      }
       const edges = [];
       pairs.forEach((p) => {
         if (!p || !p.s || !p.t) return;
         const a = String(p.s);
         const b = String(p.t);
         const pairKey = a < b ? `${a}|${b}` : `${b}|${a}`;
-        const directions = regPairMap.get(pairKey);
+        let directions = regPairMap.get(pairKey);
+        if (directions && directions.length > 0 && sourceSet) {
+          directions = directions.filter((d) => {
+            if (Array.isArray(d.sources) && d.sources.length > 0) {
+              return d.sources.some((src) => sourceSet.has(src));
+            }
+            const binds = bindsPairMap.get(`${d.src}->${d.tgt}`) || [];
+            return binds.some((m) => sourceSet.has(m.motif_source));
+          });
+        }
         if (directions && directions.length > 0) {
           edges.push({
             original_s: a,
             original_t: b,
-            directions,
+            directions: directions.map((d) => ({ src: d.src, tgt: d.tgt })),
             has_regulates: true,
           });
         }
@@ -342,42 +425,53 @@
       return { edges };
     }
 
+    const bodyPayload = { pairs };
+    if (Array.isArray(sources)) bodyPayload.sources = sources;
+
     return fetchJson(`${getApiBase()}/api/network/edges/regulates`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pairs }),
+      body: JSON.stringify(bodyPayload),
     });
   }
 
   /**
    * 6. Fetch TF-promoter motif binding events for a single directed edge
    */
-  async function getBinds(source, target) {
+  async function getBinds(source, target, sources = null) {
     if (!source || !target) return { binds: [] };
 
     if (getMode() === "static") {
       const { bindsPairMap } = await loadStaticRegulation();
       const key = `${String(source)}->${String(target)}`;
-      return { binds: bindsPairMap.get(key) || [] };
+      let binds = bindsPairMap.get(key) || [];
+      const sourceSet = normalizeStaticSourceSet(sources);
+      if (sourceSet) {
+        binds = binds.filter((b) => sourceSet.has(b.motif_source));
+      }
+      return { binds };
     }
 
-    return fetchJson(
-      `${getApiBase()}/api/network/edges/binds?source=${encodeURIComponent(
-        source
-      )}&target=${encodeURIComponent(target)}`
-    );
+    let url = `${getApiBase()}/api/network/edges/binds?source=${encodeURIComponent(
+      source
+    )}&target=${encodeURIComponent(target)}`;
+    if (Array.isArray(sources) && sources.length > 0) {
+      url += `&sources=${encodeURIComponent(sources.join(","))}`;
+    }
+    return fetchJson(url);
   }
 
   /**
    * 7. Fetch TF-promoter motif binding events for a batch of directed edges
    */
-  async function getBindsBatch(pairs) {
+  async function getBindsBatch(pairs, sources = null) {
     if (!Array.isArray(pairs) || pairs.length === 0) {
       return { bindsByPair: {} };
     }
 
     if (getMode() === "static") {
       const { bindsPairMap } = await loadStaticRegulation();
+      const sourceSet = normalizeStaticSourceSet(sources);
       const bindsByPair = {};
       pairs.forEach((p) => {
         const src = String(p.source || p.s || "");
@@ -385,16 +479,21 @@
         if (!src || !tgt) return;
         const key = `${src}->${tgt}`;
         if (bindsPairMap.has(key)) {
-          bindsByPair[key] = bindsPairMap.get(key);
+          let list = bindsPairMap.get(key);
+          if (sourceSet) list = list.filter((b) => sourceSet.has(b.motif_source));
+          bindsByPair[key] = list;
         }
       });
       return { bindsByPair };
     }
 
+    const bodyPayload = { pairs };
+    if (Array.isArray(sources)) bodyPayload.sources = sources;
+
     const res = await fetch(`${getApiBase()}/api/network/edges/binds`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pairs }),
+      body: JSON.stringify(bodyPayload),
     });
 
     if (res.ok) {
@@ -410,7 +509,7 @@
           const tgt = String(p.target || p.t || "");
           if (!src || !tgt) return;
           try {
-            const data = await getBinds(src, tgt);
+            const data = await getBinds(src, tgt, sources);
             bindsByPair[`${src}->${tgt}`] = data.binds || [];
           } catch (e) {
             console.warn(`Fallback binds fetch failed for ${src}->${tgt}`);
@@ -423,6 +522,112 @@
     const err = new Error(`Batch binds request failed (${res.status})`);
     err.status = res.status;
     throw err;
+  }
+
+  /**
+   * 8. Run Infomap Community Discovery + ORA on visible graph
+   */
+  async function runCommunityDiscovery(payload) {
+    if (getMode() === "static") {
+      if (
+        typeof window !== "undefined" &&
+        window.RICE2NET_STATIC_ANALYZE &&
+        typeof window.RICE2NET_STATIC_ANALYZE.runCommunityDiscovery === "function"
+      ) {
+        return window.RICE2NET_STATIC_ANALYZE.runCommunityDiscovery(
+          getDemoBase(),
+          payload || {}
+        );
+      }
+      throw new Error(
+        "Static Community Discovery engine is not loaded."
+      );
+    }
+
+    const res = await fetch(`${getApiBase()}/api/analyze/community-discovery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
+
+    let body = null;
+    try {
+      body = await res.json();
+    } catch (e) {}
+
+    if (!res.ok) {
+      const msg =
+        (body && body.error) ||
+        `Community Discovery request failed (${res.status})`;
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
+    }
+    return body;
+  }
+
+  /**
+   * 9. Run ORA-only on pre-defined or imported clusters
+   */
+  async function runOra(payload) {
+    if (getMode() === "static") {
+      if (
+        typeof window !== "undefined" &&
+        window.RICE2NET_STATIC_ANALYZE &&
+        typeof window.RICE2NET_STATIC_ANALYZE.runOra === "function"
+      ) {
+        return window.RICE2NET_STATIC_ANALYZE.runOra(
+          getDemoBase(),
+          payload || {}
+        );
+      }
+      throw new Error("Static ORA engine is not loaded.");
+    }
+
+    const res = await fetch(`${getApiBase()}/api/analyze/ora`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
+
+    let body = null;
+    try {
+      body = await res.json();
+    } catch (e) {}
+
+    if (!res.ok) {
+      const msg =
+        (body && body.error) || `ORA request failed (${res.status})`;
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
+    }
+    return body;
+  }
+
+  /**
+   * 10. Lazily resolve overlapping graph gene IDs for a DB-stored cluster term
+   */
+  async function getTermGenes(payload) {
+    if (getMode() === "static") {
+      if (
+        typeof window !== "undefined" &&
+        window.RICE2NET_STATIC_ANALYZE &&
+        typeof window.RICE2NET_STATIC_ANALYZE.getTermGenes === "function"
+      ) {
+        return window.RICE2NET_STATIC_ANALYZE.getTermGenes(
+          getDemoBase(),
+          payload || {}
+        );
+      }
+      return { genes: [] };
+    }
+
+    return fetchJson(`${getApiBase()}/api/analyze/term-genes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
   }
 
   window.RICE2NET_API = {
@@ -438,5 +643,8 @@
     checkRegulates,
     getBinds,
     getBindsBatch,
+    runCommunityDiscovery,
+    runOra,
+    getTermGenes,
   };
 })();

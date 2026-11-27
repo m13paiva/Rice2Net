@@ -17,7 +17,7 @@ window.importJSON = function (input) {
   const progressBar = document.getElementById("progress-bar");
 
   loader.style.display = "block";
-  document.getElementById("loader-text").innerText = "LOADING JSON... 0%";
+  document.getElementById("loader-text").innerText = "IMPORTING NETWORK LAYOUT... 0%";
   if (progressBar) progressBar.style.width = "0%";
 
   setTimeout(() => {
@@ -29,7 +29,15 @@ window.importJSON = function (input) {
           throw new Error("Invalid JSON structure");
 
         window.IS_IMPORTED_NETWORK = true;
-        VISIBILITY_STATE.EdgeBoth = 0;
+        if (typeof window.resetClustersState === "function") {
+          window.resetClustersState();
+        }
+        window.CLUSTERS_ENABLED = false;
+        if (typeof window.clearPromoterMotifAnalysis === "function") {
+          window.clearPromoterMotifAnalysis(true);
+        } else {
+          VISIBILITY_STATE.EdgeBoth = 0;
+        }
         if (typeof window.updateClusterAvailability === "function") window.updateClusterAvailability();
 
         const nameDisplay = document.getElementById('import-json-name');
@@ -52,6 +60,7 @@ window.importJSON = function (input) {
             msu_id: n.msu_id || (n.metadata && (n.metadata.MSU_ID || n.metadata.msu_id)) || "",
             originalType: n.originalType || n.type || "Gene",
             deg: n.deg !== undefined && n.deg !== null ? n.deg : 0,
+            _hasLayoutPos: n.x !== null && n.x !== undefined && n.y !== null && n.y !== undefined,
           };
           if (typeof window.applyNodeTypeStyling === "function") {
             window.applyNodeTypeStyling(nodeObj);
@@ -68,7 +77,7 @@ window.importJSON = function (input) {
           }
         });
 
-        document.getElementById("loader-text").innerText = "LOADING JSON... 50%";
+        document.getElementById("loader-text").innerText = "IMPORTING NETWORK LAYOUT... 50%";
         if (progressBar) progressBar.style.width = "50%";
 
         links = json.edges
@@ -79,6 +88,15 @@ window.importJSON = function (input) {
             const tNode = nodeMap.get(tId);
             if (!sNode || !tNode) return null;
 
+            const rawZ = e.z_score !== undefined && e.z_score !== null
+              ? e.z_score
+              : e.zscore !== undefined && e.zscore !== null
+              ? e.zscore
+              : e.Z_Score !== undefined && e.Z_Score !== null
+              ? e.Z_Score
+              : null;
+            const parsedZ = rawZ !== null && rawZ !== "" && Number.isFinite(Number(rawZ)) ? Number(rawZ) : null;
+
             return {
               source: sNode,
               target: tNode,
@@ -88,7 +106,7 @@ window.importJSON = function (input) {
                   : e.value !== undefined && e.value !== null
                   ? e.value
                   : 1,
-              irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
+              z_score: parsedZ,
               sign: e.sign || null,
               has_interacts: e.has_interacts !== false,
               has_regulates: false,
@@ -102,7 +120,7 @@ window.importJSON = function (input) {
         RAW_DATA.nodes = nodes;
         RAW_DATA.links = links;
         RAW_DATA.workingNodes = nodes;
-        RAW_DATA.workingLinks = links;
+        RAW_DATA.workingLinks = null;
         if (typeof window.__APP_CORE__.cacheMetaSnapshot === "function") {
           window.__APP_CORE__.cacheMetaSnapshot();
         }
@@ -110,8 +128,27 @@ window.importJSON = function (input) {
         RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
         RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
 
+        const hasZScore =
+          typeof window.configureZScoreBounds === "function"
+            ? window.configureZScoreBounds(RAW_DATA.links)
+            : false;
+        if (hasZScore && typeof window.applyEdgeFilter === "function") {
+          window.applyEdgeFilter();
+        }
+
         if (loader) loader.style.display = "none";
         finishSetup(true);
+
+        // Automatically restore saved clusters and run ORA-only re-analysis
+        if (
+          json.clusters &&
+          Array.isArray(json.clusters.items) &&
+          json.clusters.items.length > 0 &&
+          typeof window.loadImportedClustersAndRunOra === "function"
+        ) {
+          await window.loadImportedClustersAndRunOra(json.clusters);
+        }
+
         if (typeof window.showDemoImportNotice === "function") {
           window.showDemoImportNotice();
         }
@@ -136,18 +173,26 @@ window.importEdges = function (input) {
   const progressBar = document.getElementById("progress-bar");
 
   loader.style.display = "block";
-  document.getElementById("loader-text").innerText = "READING EDGE TABLE... 0%";
+  document.getElementById("loader-text").innerText = "IMPORTING EDGE TABLE... 0%";
   if (progressBar) progressBar.style.width = "0%";
 
   setTimeout(() => {
     const reader = new FileReader();
     reader.onload = async function (e) {
-      document.getElementById("loader-text").innerText = "PARSING GRAPH... 50%";
+      document.getElementById("loader-text").innerText = "BUILDING NETWORK GRAPH... 50%";
       if (progressBar) progressBar.style.width = "50%";
       await sleep(10);
 
       window.IS_IMPORTED_NETWORK = true;
-      VISIBILITY_STATE.EdgeBoth = 0;
+      if (typeof window.resetClustersState === "function") {
+        window.resetClustersState();
+      }
+      window.CLUSTERS_ENABLED = false;
+      if (typeof window.clearPromoterMotifAnalysis === "function") {
+        window.clearPromoterMotifAnalysis(true);
+      } else {
+        VISIBILITY_STATE.EdgeBoth = 0;
+      }
       if (typeof window.updateClusterAvailability === "function") window.updateClusterAvailability();
 
       const nameDisplay = document.getElementById('import-edges-name');
@@ -160,7 +205,43 @@ window.importEdges = function (input) {
       if (jsonInfo) jsonInfo.style.display = 'none';
 
       const text = e.target.result;
-      const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      const rawLines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+
+      // Parse optional Rice2Net cluster metadata comments (#RICE2NET_*) and strip comment lines
+      let importedClusterMeta = null;
+      const importedClusterDefs = new Map(); // clusterId -> { id, name, color, genes: Set }
+      const lines = [];
+
+      for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i];
+        if (line.startsWith("#RICE2NET_CLUSTERS_META\t")) {
+          try {
+            importedClusterMeta = JSON.parse(line.slice("#RICE2NET_CLUSTERS_META\t".length));
+          } catch (err) {}
+          continue;
+        }
+        if (line.startsWith("#RICE2NET_CLUSTER\t")) {
+          const parts = line.split("\t");
+          if (parts.length >= 3) {
+            const cid = parts[1].trim();
+            const cname = parts[2].trim();
+            const ccolor = parts[3] ? parts[3].trim() : null;
+            if (cid) {
+              importedClusterDefs.set(cid, {
+                id: cid,
+                name: cname || cid,
+                color: ccolor || null,
+                customColor: Boolean(ccolor),
+                genes: new Set(),
+              });
+            }
+          }
+          continue;
+        }
+        if (line.trim().startsWith("#")) continue;
+        lines.push(line);
+      }
+
       if (lines.length === 0) {
         alert("No valid edges found.");
         loader.style.display = "none";
@@ -174,8 +255,10 @@ window.importEdges = function (input) {
         source: 0,
         target: 1,
         weight: 2,
-        irp: -1,
+        zScore: -1,
         sign: -1,
+        sourceCluster: -1,
+        targetCluster: -1,
       };
 
       const firstLine = lines[0].trim();
@@ -209,12 +292,29 @@ window.importEdges = function (input) {
             if (h === "source" || h === "from") colMap.source = idx;
             else if (h === "target" || h === "to") colMap.target = idx;
             else if (h === "weight" || h === "w" || h === "val" || h === "value") colMap.weight = idx;
-            else if (h === "irp_score" || h === "irp") colMap.irp = idx;
+            else if (h === "z_score" || h === "zscore" || h === "z-score" || h === "z") colMap.zScore = idx;
             else if (h === "sign") colMap.sign = idx;
+            else if (h === "source_cluster") colMap.sourceCluster = idx;
+            else if (h === "target_cluster") colMap.targetCluster = idx;
           });
           startIdx = 1;
         }
       }
+
+      const assignImportedCluster = (geneId, rawClusterVal) => {
+        const cid = String(rawClusterVal || "").trim();
+        if (!cid || cid === "-" || cid.toLowerCase() === "none") return;
+        if (!importedClusterDefs.has(cid)) {
+          importedClusterDefs.set(cid, {
+            id: cid,
+            name: cid,
+            color: null,
+            customColor: false,
+            genes: new Set(),
+          });
+        }
+        importedClusterDefs.get(cid).genes.add(geneId);
+      };
 
       for (let i = startIdx; i < lines.length; i++) {
         const parts = splitLine(lines[i]);
@@ -224,8 +324,17 @@ window.importEdges = function (input) {
         const t = parts[colMap.target] ? parts[colMap.target].trim() : parts[1].trim();
         if (!s || !t) continue;
 
+        if (hasHeader) {
+          if (colMap.sourceCluster !== -1 && parts[colMap.sourceCluster] !== undefined) {
+            assignImportedCluster(s, parts[colMap.sourceCluster]);
+          }
+          if (colMap.targetCluster !== -1 && parts[colMap.targetCluster] !== undefined) {
+            assignImportedCluster(t, parts[colMap.targetCluster]);
+          }
+        }
+
         let w = 1;
-        let irp = null;
+        let zScore = null;
         let sign = null;
 
         if (hasHeader) {
@@ -233,9 +342,9 @@ window.importEdges = function (input) {
             const parsedW = parseFloat(parts[colMap.weight]);
             if (!isNaN(parsedW)) w = parsedW;
           }
-          if (colMap.irp !== -1 && parts[colMap.irp] !== undefined) {
-            const parsedIRP = parseFloat(parts[colMap.irp]);
-            if (!isNaN(parsedIRP)) irp = parsedIRP;
+          if (colMap.zScore !== -1 && parts[colMap.zScore] !== undefined && parts[colMap.zScore].trim() !== "") {
+            const parsedZ = parseFloat(parts[colMap.zScore]);
+            if (!isNaN(parsedZ)) zScore = parsedZ;
           }
           if (colMap.sign !== -1 && parts[colMap.sign] !== undefined) {
             const rawSign = parts[colMap.sign].trim();
@@ -246,7 +355,7 @@ window.importEdges = function (input) {
         } else {
           // No header: dynamically scan columns after target (index 2 onwards)
           let assignedWeight = false;
-          let assignedIRP = false;
+          let assignedZScore = false;
 
           for (let col = 2; col < parts.length; col++) {
             const p = parts[col].trim();
@@ -260,9 +369,9 @@ window.importEdges = function (input) {
               if (!assignedWeight) {
                 w = num;
                 assignedWeight = true;
-              } else if (!assignedIRP) {
-                irp = num;
-                assignedIRP = true;
+              } else if (!assignedZScore) {
+                zScore = num;
+                assignedZScore = true;
               }
             }
           }
@@ -274,7 +383,7 @@ window.importEdges = function (input) {
             source: s,
             target: t,
             weight: w,
-            irp: irp,
+            z_score: zScore,
             sign: sign,
             has_interacts: true,
             has_regulates: false,
@@ -300,6 +409,7 @@ window.importEdges = function (input) {
         deg: 0,
         x: random() * width,
         y: random() * height,
+        _hasLayoutPos: false,
       }));
 
       const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
@@ -308,7 +418,7 @@ window.importEdges = function (input) {
           source: nodeMap.get(String(e.source)),
           target: nodeMap.get(String(e.target)),
           weight: e.weight,
-          irp: e.irp,
+          z_score: e.z_score !== undefined && e.z_score !== null ? e.z_score : null,
           sign: e.sign,
           has_interacts: e.has_interacts,
           has_regulates: false,
@@ -321,14 +431,51 @@ window.importEdges = function (input) {
       RAW_DATA.nodes = nodes;
       RAW_DATA.links = newEdges;
       RAW_DATA.workingNodes = nodes;
-      RAW_DATA.workingLinks = links;
+      RAW_DATA.workingLinks = null;
       if (typeof window.__APP_CORE__.cacheMetaSnapshot === "function") {
         window.__APP_CORE__.cacheMetaSnapshot();
       }
       RAW_DATA.adjacency = window.__APP_CORE__.buildAdjacency(nodes, links);
       RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
       RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+
+      const hasZScore =
+        typeof window.configureZScoreBounds === "function"
+          ? window.configureZScoreBounds(RAW_DATA.links)
+          : false;
+      if (hasZScore && typeof window.applyEdgeFilter === "function") {
+        window.applyEdgeFilter();
+      }
+
+      // Restore clusters parsed from TSV header/columns and run ORA-only re-analysis
+      const importedItems = Array.from(importedClusterDefs.values())
+        .filter((c) => c.genes.size > 0)
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          color: c.color,
+          customColor: c.customColor,
+          genes: Array.from(c.genes),
+        }));
+
       startCalculation(true);
+
+      if (
+        importedItems.length > 0 &&
+        typeof window.loadImportedClustersAndRunOra === "function"
+      ) {
+        window.loadImportedClustersAndRunOra({
+          pvalThreshold: (importedClusterMeta && importedClusterMeta.pvalThreshold) || 0.05,
+          backgroundMode: (importedClusterMeta && importedClusterMeta.backgroundMode) || "network",
+          annotatedOnly:
+            importedClusterMeta && importedClusterMeta.annotatedOnly !== undefined
+              ? importedClusterMeta.annotatedOnly
+              : true,
+          markovTime: (importedClusterMeta && importedClusterMeta.markovTime) || null,
+          items: importedItems,
+        });
+      }
+
       if (typeof window.showDemoImportNotice === "function") {
         window.showDemoImportNotice();
       }
@@ -447,7 +594,9 @@ window.runLocalPhysics = function (affectedIds) {
     simulation.on("tick", null);
     simulation.on("end", null);
 
-    if (typeof d3 !== "undefined") {
+    if (typeof window.rebuildInteractiveQuadtree === "function") {
+      window.rebuildInteractiveQuadtree();
+    } else if (typeof d3 !== "undefined") {
       quadtree = d3.quadtree().x((d) => d.x).y((d) => d.y).addAll(nodes);
     }
   });

@@ -6,7 +6,7 @@ FRONTEND_DIR="$BASE_DIR"
 BACKEND_DIR="$BASE_DIR/server"
 
 echo "Cleaning up any old server instances..."
-pkill -f "node server.js"
+pkill -f "node.*server\.js"
 pkill -f "python3 -m http.server 8000"
 
 echo "Starting Neo4j Database Service..."

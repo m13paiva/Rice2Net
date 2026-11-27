@@ -11,6 +11,10 @@ logs/
 .pm2/
 npm-debug.log*
 
+# Compiled layout binary & generated large layout files
+tools/compute_layout
+layout_out/
+
 # Operating System temporary files
 .DS_Store
 Thumbs.db

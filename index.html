@@ -4,7 +4,7 @@
         <meta charset="UTF-8" />
         <title>Rice2Net</title>
         <script src="vendor/d3.v7.min.js"></script>
-        <link rel="stylesheet" href="style.css?v=8" />
+        <link rel="stylesheet" href="style.css?v=11" />
         <script>
             function enterApp() {
                 const overlay = document.getElementById('homepage-overlay');
@@ -277,6 +277,135 @@
                     </div>
                 </details>
 
+                <details id="analyze-section">
+                    <summary>Analyze</summary>
+                    <details id="community-discovery-section" open>
+                        <summary>Community Discovery</summary>
+                        <div class="control-group">
+                            <label for="cd-markov-time">Markov Time</label>
+                            <input
+                                type="number"
+                                id="cd-markov-time"
+                                value="1"
+                                min="0.01"
+                                max="100"
+                                step="0.1"
+                            />
+                        </div>
+
+                        <div class="cd-subpanel">
+                            <div class="control-group" style="margin-bottom: 10px;">
+                                <label for="cd-bg-mode">Background Gene Set</label>
+                                <select id="cd-bg-mode" class="cd-select" onchange="onBackgroundModeChange(this.value)">
+                                    <option value="network" selected>All genes in visible network</option>
+                                    <option value="none">No background</option>
+                                    <option value="custom">Custom list</option>
+                                </select>
+                            </div>
+
+                            <div id="cd-bg-custom-wrap" style="display: none; margin-bottom: 10px;">
+                                <label
+                                    for="cd-bg-input"
+                                    style="
+                                        font-size: 0.8rem;
+                                        font-weight: 600;
+                                        color: #ccc;
+                                        margin-bottom: 5px;
+                                        display: block;
+                                    "
+                                    >Custom Background Genes (One per line)</label
+                                >
+                                <textarea
+                                    id="cd-bg-input"
+                                    placeholder="GeneA&#10;GeneB&#10;GeneC"
+                                ></textarea>
+                                <input
+                                    type="file"
+                                    id="cd-bg-file"
+                                    accept=".txt,.tsv,.csv"
+                                    onchange="loadBackgroundFile(this)"
+                                />
+                            </div>
+
+                            <div class="cd-scope-group">
+                                <span class="cd-scope-label">Background Gene Scope</span>
+                                <div class="cd-radio-row">
+                                    <label class="cd-radio-option">
+                                        <input type="radio" name="cd-gene-scope" id="cd-scope-annotated" value="annotated" checked />
+                                        <span>Only annotated</span>
+                                    </label>
+                                    <label class="cd-radio-option">
+                                        <input type="radio" name="cd-gene-scope" id="cd-scope-all" value="all" />
+                                        <span>All genes</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <label for="cd-pval-threshold">Adjusted p-value Threshold</label>
+                            <input
+                                type="number"
+                                id="cd-pval-threshold"
+                                value="0.05"
+                                min="0.000001"
+                                max="1"
+                                step="0.01"
+                            />
+                        </div>
+
+                        <button id="cd-run-btn" class="btn btn-action" onclick="runCommunityDiscoveryUI()">
+                            GO
+                        </button>
+
+                        <div id="cd-results-panel" style="display: none;">
+                            <div id="cd-status-summary" class="cd-status-summary"></div>
+                            <button class="btn btn-export" onclick="openClusterOraModal()" style="margin-bottom: 6px;">
+                                View ORA Results
+                            </button>
+                            <button class="btn btn-clear" onclick="clearDiscoveredClusters()" style="margin-top: 0;">
+                                Clear Clusters
+                            </button>
+                        </div>
+                    </details>
+
+                    <details id="motif-analysis-section">
+                        <summary>Promoter-Binding Motifs</summary>
+                        <div class="cd-subpanel">
+                            <span class="cd-scope-label" style="display: block; margin-bottom: 8px;">Motif Sources</span>
+                            <div class="pbm-source-list">
+                                <label class="pbm-source-option">
+                                    <input type="checkbox" class="pbm-source-check" value="PlantTFDB" checked />
+                                    <span>PlantTFDB</span>
+                                </label>
+                                <label class="pbm-source-option">
+                                    <input type="checkbox" class="pbm-source-check" value="JASPAR Core" checked />
+                                    <span>JASPAR Core</span>
+                                </label>
+                                <label class="pbm-source-option">
+                                    <input type="checkbox" class="pbm-source-check" value="JASPAR Unvalidated" checked />
+                                    <span>JASPAR Unvalidated</span>
+                                </label>
+                                <label class="pbm-source-option">
+                                    <input type="checkbox" class="pbm-source-check" value="CIS-BP" checked />
+                                    <span>CIS-BP</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <button id="pbm-run-btn" class="btn btn-action" onclick="runPromoterMotifAnalysisUI()">
+                            GO
+                        </button>
+
+                        <div id="pbm-results-panel" style="display: none;">
+                            <div id="pbm-status-summary" class="cd-status-summary"></div>
+                            <button class="btn btn-clear" onclick="clearPromoterMotifAnalysis()" style="margin-top: 0;">
+                                Clear Regulation Edges
+                            </button>
+                        </div>
+                    </details>
+                </details>
+
                 <details>
                     <summary>Layout</summary>
                     <details>
@@ -473,18 +602,20 @@
             </div>
         </div>
 
-        <script src="app/globals.js?v=7" defer></script>
-        <script src="app/api.js?v=8" defer></script>
-        <script src="app/core.js?v=8" defer></script>
-        <script src="app/data.js?v=8" defer></script>
-        <script src="app/sim.js?v=4" defer></script>
-        <script src="app/filter.js?v=4" defer></script>
+        <script src="app/globals.js?v=10" defer></script>
+        <script src="app/static_analyze.js?v=2" defer></script>
+        <script src="app/api.js?v=12" defer></script>
+        <script src="app/core.js?v=13" defer></script>
+        <script src="app/data.js?v=14" defer></script>
+        <script src="app/sim.js?v=6" defer></script>
+        <script src="app/filter.js?v=8" defer></script>
         <script src="app/kegg.js?v=4" defer></script>
-        <script src="app/controls.js?v=6" defer></script>
-        <script src="app/legends.js?v=7" defer></script>
-        <script src="app/graph.js?v=7" defer></script>
-        <script src="app/interactions.js?v=7" defer></script>
-        <script src="app/exporters.js?v=7" defer></script>
+        <script src="app/controls.js?v=9" defer></script>
+        <script src="app/legends.js?v=9" defer></script>
+        <script src="app/graph.js?v=10" defer></script>
+        <script src="app/interactions.js?v=11" defer></script>
+        <script src="app/exporters.js?v=10" defer></script>
+        <script src="app/analyze.js?v=3" defer></script>
         <script src="app/ui.js?v=9" defer></script>
     </body>
 </html>
