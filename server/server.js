@@ -4,6 +4,7 @@
  */
 
 require("dotenv").config();
+const zlib = require("zlib");
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -108,11 +109,49 @@ const isValidIdentifier = (id) => {
 
 /**
  * GET /api/network/init
- * Streams all nodes and baseline interactome edges to avoid memory bottlenecks.
+ * Streams all nodes and baseline interactome edges in compact integer-indexed tuple format
+ * (with chunked buffering and gzip compression when supported) to minimize payload size and browser RAM.
+ * Supports optional ?format=legacy and ?minZ=<number> query parameters.
  */
 app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
   const session = driver.session({ defaultAccessMode: neo4j.session.READ });
   let isClosed = false;
+
+  const useLegacy = String(req.query.format || "").toLowerCase() === "legacy";
+  const rawMinZ = req.query.minZ !== undefined ? Number(req.query.minZ) : null;
+  const hasMinZ = rawMinZ !== null && Number.isFinite(rawMinZ);
+
+  const acceptEncoding = String(req.headers["accept-encoding"] || "");
+  const useGzip = acceptEncoding.includes("gzip");
+
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Vary", "Accept-Encoding");
+
+  let outStream = res;
+  if (useGzip) {
+    res.setHeader("Content-Encoding", "gzip");
+    outStream = zlib.createGzip({ level: 1 });
+    outStream.pipe(res);
+  }
+
+  let outBuf = "";
+  const FLUSH_THRESHOLD = 65536;
+  const writeChunk = (str) => {
+    if (isClosed) return;
+    outBuf += str;
+    if (outBuf.length >= FLUSH_THRESHOLD) {
+      outStream.write(outBuf);
+      outBuf = "";
+    }
+  };
+  const flushAndEnd = () => {
+    if (isClosed) return;
+    if (outBuf.length > 0) {
+      outStream.write(outBuf);
+      outBuf = "";
+    }
+    outStream.end();
+  };
 
   const cleanup = async () => {
     if (!isClosed) {
@@ -127,10 +166,12 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
 
   req.on("close", cleanup);
 
-  res.setHeader("Content-Type", "application/json");
-  res.write('{"nodes":[');
+  writeChunk(useLegacy ? '{"nodes":[' : '{"format":"compact-v1","nodes":[');
 
+  const nodeIdxById = new Map();
+  let nodeCount = 0;
   let isFirstNode = true;
+
   session
     .run(
       `
@@ -141,62 +182,87 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
     .subscribe({
       onNext: (record) => {
         if (isClosed) return;
-        if (!isFirstNode) res.write(",");
+        const id = record.get("id");
+        nodeIdxById.set(String(id), nodeCount++);
         const degVal = record.get("deg");
-        res.write(
-          JSON.stringify({
-            id: record.get("id"),
-            x: record.get("x"),
-            y: record.get("y"),
-            deg: degVal !== null && degVal !== undefined && degVal.toNumber ? degVal.toNumber() : degVal,
-            originalType: record.get("type") || "Gene",
-            symbol: record.get("symbol"),
-            msu_id: record.get("msu_id"),
-            identifier: record.get("identifier"),
-            isRogue: record.get("x") === null,
-          })
-        );
+        const nodeJson = JSON.stringify({
+          id,
+          x: record.get("x"),
+          y: record.get("y"),
+          deg: degVal !== null && degVal !== undefined && degVal.toNumber ? degVal.toNumber() : degVal,
+          originalType: record.get("type") || "Gene",
+          symbol: record.get("symbol"),
+          msu_id: record.get("msu_id"),
+          identifier: record.get("identifier"),
+          isRogue: record.get("x") === null,
+        });
+        writeChunk(isFirstNode ? nodeJson : "," + nodeJson);
         isFirstNode = false;
       },
       onCompleted: () => {
         if (isClosed) return;
-        res.write('],"edges":[');
+        writeChunk('],"edges":[');
         let isFirstEdge = true;
-        session
-          .run(
-            `
+
+        const edgeQuery = hasMinZ
+          ? `
             MATCH (s:Gene)-[r:INTERACTS_WITH]->(t:Gene)
-            RETURN s.id as s, t.id as t, r.weight as w, r.irp as irp, r.sign as sign
+            WHERE r.z_score >= $minZ
+            RETURN s.id as s, t.id as t, r.weight as w, r.z_score as z_score, r.sign as sign
             `
-          )
+          : `
+            MATCH (s:Gene)-[r:INTERACTS_WITH]->(t:Gene)
+            RETURN s.id as s, t.id as t, r.weight as w, r.z_score as z_score, r.sign as sign
+            `;
+
+        session
+          .run(edgeQuery, hasMinZ ? { minZ: rawMinZ } : {})
           .subscribe({
             onNext: (record) => {
               if (isClosed) return;
-              if (!isFirstEdge) res.write(",");
-              res.write(
-                JSON.stringify({
-                  source: record.get("s"),
-                  target: record.get("t"),
+              const sId = record.get("s");
+              const tId = record.get("t");
+              const wVal = record.get("w");
+              const zVal = record.get("z_score");
+              const signVal = record.get("sign");
+
+              if (useLegacy) {
+                const edgeJson = JSON.stringify({
+                  source: sId,
+                  target: tId,
                   has_interacts: true,
                   has_regulates: false,
-                  weight: record.get("w"),
-                  irp: record.get("irp"),
-                  sign: record.get("sign") || null,
-                })
-              );
+                  weight: wVal,
+                  z_score: zVal !== null && zVal !== undefined ? zVal : null,
+                  sign: signVal || null,
+                });
+                writeChunk(isFirstEdge ? edgeJson : "," + edgeJson);
+                isFirstEdge = false;
+                return;
+              }
+
+              const sIdx = nodeIdxById.get(String(sId));
+              const tIdx = nodeIdxById.get(String(tId));
+              if (sIdx === undefined || tIdx === undefined) return;
+
+              const wStr = wVal !== null && wVal !== undefined ? wVal : 1;
+              const zStr = zVal !== null && zVal !== undefined ? zVal : "null";
+              const signCode = signVal === "+" ? 1 : signVal === "-" ? -1 : 0;
+              const tuple = `[${sIdx},${tIdx},${wStr},${zStr},${signCode}]`;
+              writeChunk(isFirstEdge ? tuple : "," + tuple);
               isFirstEdge = false;
             },
             onCompleted: async () => {
               if (!isClosed) {
-                res.write("]}");
-                res.end();
+                writeChunk("]}");
+                flushAndEnd();
               }
               await cleanup();
             },
             onError: async (err) => {
               console.error("Edge Stream Error:", err);
               if (!res.headersSent) res.status(500).json({ error: "Edge streaming failed." });
-              else res.end();
+              else flushAndEnd();
               await cleanup();
             },
           });
@@ -204,7 +270,7 @@ app.get("/api/network/init", heavyQueryLimiter, (req, res) => {
       onError: async (err) => {
         console.error("Node Stream Error:", err);
         if (!res.headersSent) res.status(500).json({ error: "Node streaming failed." });
-        else res.end();
+        else flushAndEnd();
         await cleanup();
       },
     });

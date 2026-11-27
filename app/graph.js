@@ -6,14 +6,14 @@
  */
 
 /** D3 Zoom Behavior setup with scale extent limits */
-const zoomBehavior = d3.zoom().scaleExtent([0.1, 10]);
+const zoomBehavior = d3.zoom().scaleExtent([0.01, 10]);
 
 /**
  * Re-applies node and link visual styling based on current legend toggles, target inputs,
  * functional cluster assignments, and node degree connectivity.
  */
 window.reapplyColors = function () {
-  if (typeof initIRPControls === "function") initIRPControls();
+  if (typeof initZScoreControls === "function") initZScoreControls();
   if (typeof initLegendStructure === "function") initLegendStructure();
 
   if (typeof VISIBILITY_STATE.Target === "undefined") {
@@ -37,12 +37,12 @@ window.reapplyColors = function () {
 
   // Compute node degrees based on visible edges
   const nodeDegrees = new Map();
-  nodes.forEach((n) => nodeDegrees.set(n.id, 0));
+  nodes.forEach((n) => nodeDegrees.set(String(n.id), 0));
 
   links.forEach((l) => {
     if (window.isEdgeVisible ? window.isEdgeVisible(l) : true) {
-      const sid = typeof l.source === "object" ? l.source.id : l.source;
-      const tid = typeof l.target === "object" ? l.target.id : l.target;
+      const sid = String(typeof l.source === "object" ? l.source.id : l.source);
+      const tid = String(typeof l.target === "object" ? l.target.id : l.target);
       nodeDegrees.set(sid, (nodeDegrees.get(sid) || 0) + 1);
       nodeDegrees.set(tid, (nodeDegrees.get(tid) || 0) + 1);
     }
@@ -57,7 +57,7 @@ window.reapplyColors = function () {
       n.strokeColor = CONFIG.visuals.colors.Transparent;
       return;
     }
-    const deg = nodeDegrees.get(n.id) || 0;
+    const deg = nodeDegrees.get(String(n.id)) || 0;
     n.deg = deg;
     n.isRogue = deg === 0;
 
@@ -127,7 +127,7 @@ window.reapplyColors = function () {
         isVisible = false;
       } else {
         isVisible = true;
-        if (rogueState === 1 && state !== 2) {
+        if (rogueState === 1) {
           isHighlighted = false;
         }
       }
@@ -198,6 +198,7 @@ window.autoFit = function () {
 
   for (const n of nodes) {
     if (n.isDummy || String(n.id).startsWith("__dummy")) continue;
+    if (n.x == null || n.y == null) continue;
     if (n.color === CONFIG.visuals.colors.Transparent) continue;
     if (n.isRogue && !VISIBILITY_STATE.Rogue && !n.isTarget) continue;
 

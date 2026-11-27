@@ -60,6 +60,7 @@ window.importJSON = function (input) {
             msu_id: n.msu_id || (n.metadata && (n.metadata.MSU_ID || n.metadata.msu_id)) || "",
             originalType: n.originalType || n.type || "Gene",
             deg: n.deg !== undefined && n.deg !== null ? n.deg : 0,
+            _hasLayoutPos: n.x !== null && n.x !== undefined && n.y !== null && n.y !== undefined,
           };
           if (typeof window.applyNodeTypeStyling === "function") {
             window.applyNodeTypeStyling(nodeObj);
@@ -87,6 +88,15 @@ window.importJSON = function (input) {
             const tNode = nodeMap.get(tId);
             if (!sNode || !tNode) return null;
 
+            const rawZ = e.z_score !== undefined && e.z_score !== null
+              ? e.z_score
+              : e.zscore !== undefined && e.zscore !== null
+              ? e.zscore
+              : e.Z_Score !== undefined && e.Z_Score !== null
+              ? e.Z_Score
+              : null;
+            const parsedZ = rawZ !== null && rawZ !== "" && Number.isFinite(Number(rawZ)) ? Number(rawZ) : null;
+
             return {
               source: sNode,
               target: tNode,
@@ -96,7 +106,7 @@ window.importJSON = function (input) {
                   : e.value !== undefined && e.value !== null
                   ? e.value
                   : 1,
-              irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
+              z_score: parsedZ,
               sign: e.sign || null,
               has_interacts: e.has_interacts !== false,
               has_regulates: false,
@@ -110,13 +120,21 @@ window.importJSON = function (input) {
         RAW_DATA.nodes = nodes;
         RAW_DATA.links = links;
         RAW_DATA.workingNodes = nodes;
-        RAW_DATA.workingLinks = links;
+        RAW_DATA.workingLinks = null;
         if (typeof window.__APP_CORE__.cacheMetaSnapshot === "function") {
           window.__APP_CORE__.cacheMetaSnapshot();
         }
         RAW_DATA.adjacency = window.__APP_CORE__.buildAdjacency(nodes, links);
         RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
         RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+
+        const hasZScore =
+          typeof window.configureZScoreBounds === "function"
+            ? window.configureZScoreBounds(RAW_DATA.links)
+            : false;
+        if (hasZScore && typeof window.applyEdgeFilter === "function") {
+          window.applyEdgeFilter();
+        }
 
         if (loader) loader.style.display = "none";
         finishSetup(true);
@@ -237,7 +255,7 @@ window.importEdges = function (input) {
         source: 0,
         target: 1,
         weight: 2,
-        irp: -1,
+        zScore: -1,
         sign: -1,
         sourceCluster: -1,
         targetCluster: -1,
@@ -274,7 +292,7 @@ window.importEdges = function (input) {
             if (h === "source" || h === "from") colMap.source = idx;
             else if (h === "target" || h === "to") colMap.target = idx;
             else if (h === "weight" || h === "w" || h === "val" || h === "value") colMap.weight = idx;
-            else if (h === "irp_score" || h === "irp") colMap.irp = idx;
+            else if (h === "z_score" || h === "zscore" || h === "z-score" || h === "z") colMap.zScore = idx;
             else if (h === "sign") colMap.sign = idx;
             else if (h === "source_cluster") colMap.sourceCluster = idx;
             else if (h === "target_cluster") colMap.targetCluster = idx;
@@ -316,7 +334,7 @@ window.importEdges = function (input) {
         }
 
         let w = 1;
-        let irp = null;
+        let zScore = null;
         let sign = null;
 
         if (hasHeader) {
@@ -324,9 +342,9 @@ window.importEdges = function (input) {
             const parsedW = parseFloat(parts[colMap.weight]);
             if (!isNaN(parsedW)) w = parsedW;
           }
-          if (colMap.irp !== -1 && parts[colMap.irp] !== undefined) {
-            const parsedIRP = parseFloat(parts[colMap.irp]);
-            if (!isNaN(parsedIRP)) irp = parsedIRP;
+          if (colMap.zScore !== -1 && parts[colMap.zScore] !== undefined && parts[colMap.zScore].trim() !== "") {
+            const parsedZ = parseFloat(parts[colMap.zScore]);
+            if (!isNaN(parsedZ)) zScore = parsedZ;
           }
           if (colMap.sign !== -1 && parts[colMap.sign] !== undefined) {
             const rawSign = parts[colMap.sign].trim();
@@ -337,7 +355,7 @@ window.importEdges = function (input) {
         } else {
           // No header: dynamically scan columns after target (index 2 onwards)
           let assignedWeight = false;
-          let assignedIRP = false;
+          let assignedZScore = false;
 
           for (let col = 2; col < parts.length; col++) {
             const p = parts[col].trim();
@@ -351,9 +369,9 @@ window.importEdges = function (input) {
               if (!assignedWeight) {
                 w = num;
                 assignedWeight = true;
-              } else if (!assignedIRP) {
-                irp = num;
-                assignedIRP = true;
+              } else if (!assignedZScore) {
+                zScore = num;
+                assignedZScore = true;
               }
             }
           }
@@ -365,7 +383,7 @@ window.importEdges = function (input) {
             source: s,
             target: t,
             weight: w,
-            irp: irp,
+            z_score: zScore,
             sign: sign,
             has_interacts: true,
             has_regulates: false,
@@ -391,6 +409,7 @@ window.importEdges = function (input) {
         deg: 0,
         x: random() * width,
         y: random() * height,
+        _hasLayoutPos: false,
       }));
 
       const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
@@ -399,7 +418,7 @@ window.importEdges = function (input) {
           source: nodeMap.get(String(e.source)),
           target: nodeMap.get(String(e.target)),
           weight: e.weight,
-          irp: e.irp,
+          z_score: e.z_score !== undefined && e.z_score !== null ? e.z_score : null,
           sign: e.sign,
           has_interacts: e.has_interacts,
           has_regulates: false,
@@ -412,13 +431,21 @@ window.importEdges = function (input) {
       RAW_DATA.nodes = nodes;
       RAW_DATA.links = newEdges;
       RAW_DATA.workingNodes = nodes;
-      RAW_DATA.workingLinks = links;
+      RAW_DATA.workingLinks = null;
       if (typeof window.__APP_CORE__.cacheMetaSnapshot === "function") {
         window.__APP_CORE__.cacheMetaSnapshot();
       }
       RAW_DATA.adjacency = window.__APP_CORE__.buildAdjacency(nodes, links);
       RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
       RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+
+      const hasZScore =
+        typeof window.configureZScoreBounds === "function"
+          ? window.configureZScoreBounds(RAW_DATA.links)
+          : false;
+      if (hasZScore && typeof window.applyEdgeFilter === "function") {
+        window.applyEdgeFilter();
+      }
 
       // Restore clusters parsed from TSV header/columns and run ORA-only re-analysis
       const importedItems = Array.from(importedClusterDefs.values())
@@ -567,7 +594,9 @@ window.runLocalPhysics = function (affectedIds) {
     simulation.on("tick", null);
     simulation.on("end", null);
 
-    if (typeof d3 !== "undefined") {
+    if (typeof window.rebuildInteractiveQuadtree === "function") {
+      window.rebuildInteractiveQuadtree();
+    } else if (typeof d3 !== "undefined") {
       quadtree = d3.quadtree().x((d) => d.x).y((d) => d.y).addAll(nodes);
     }
   });

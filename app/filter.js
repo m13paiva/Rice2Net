@@ -307,7 +307,20 @@ window.contractNode = function(nodeId) {
 };
 
 /**
- * Expands a target node by adding back its missing 1st-degree neighbors from the master topology.
+ * Checks whether a master edge passes the active Z-Score threshold (if enabled).
+ * @param {Object} l - Edge object from RAW_DATA.links.
+ * @returns {boolean} True if edge qualifies under current Z-Score setting.
+ */
+function edgePassesZScore(l) {
+  if (typeof ZSCORE_STATE === "undefined" || !ZSCORE_STATE.enabled) return true;
+  if (!l || l.z_score === null || l.z_score === undefined || l.z_score === "") return false;
+  const z = Number(l.z_score);
+  return Number.isFinite(z) && z >= ZSCORE_STATE.threshold;
+}
+
+/**
+ * Expands a target node by adding back its missing 1st-degree neighbors from the master topology
+ * (respecting the active Z-Score threshold when enabled).
  * @param {string} nodeId - Target node ID to expand.
  */
 window.expandNode = function(nodeId) {
@@ -330,6 +343,8 @@ window.expandNode = function(nodeId) {
     const fullNeighbors = new Set();
     const myFullEntries = fullAdj.get(strNodeId) || [];
     for (let i = 0; i < myFullEntries.length; i++) {
+      const edgeObj = RAW_DATA.links[myFullEntries[i].idx];
+      if (!edgePassesZScore(edgeObj)) continue;
       fullNeighbors.add(myFullEntries[i].n);
     }
 
@@ -349,7 +364,7 @@ window.expandNode = function(nodeId) {
     RAW_DATA.nodes.forEach(n => {
         const nId = String(n.id);
         if (newNeighborIds.has(nId)) {
-            const nn = { ...n, x: activeNode.x + (Math.random() * 20 - 10), y: activeNode.y + (Math.random() * 20 - 10), vx: 0, vy: 0 };
+            const nn = { ...n, x: activeNode.x + (Math.random() * 20 - 10), y: activeNode.y + (Math.random() * 20 - 10), vx: 0, vy: 0, isRogue: false, dashed: false, _hasLayoutPos: true };
             if (typeof applyMetaToNode === "function") applyMetaToNode(nn);
             if (typeof applyTypeStyling === "function") applyTypeStyling(nn);
             nodesToAdd.push(nn);
@@ -373,7 +388,7 @@ window.expandNode = function(nodeId) {
     const newEdges = [];
     const considerLinkByIdx = (idx) => {
         const l = RAW_DATA.links[idx];
-        if (!l) return;
+        if (!l || !edgePassesZScore(l)) return;
         const s = String(l.source.id || l.source);
         const t = String(l.target.id || l.target);
         const key = s < t ? `${s}-${t}` : `${t}-${s}`;
@@ -424,8 +439,12 @@ window.resetToFull = async function () {
   progressBar.style.width = "0%";
   await sleep(50);
 
-  if (typeof window.updateIRPControlUI === "function") {
-    window.updateIRPControlUI(0);
+  if (
+    typeof ZSCORE_STATE !== "undefined" &&
+    ZSCORE_STATE.enabled &&
+    typeof window.updateZScoreControlUI === "function"
+  ) {
+    window.updateZScoreControlUI(ZSCORE_STATE.defaultThreshold);
   }
 
   if (simulation) simulation.stop();
@@ -443,7 +462,8 @@ window.resetToFull = async function () {
     : "none";
 
   const hasCachedPos =
-    RAW_DATA.nodes.length > 0 && RAW_DATA.nodes[0].x !== undefined;
+    RAW_DATA.nodes.length > 0 &&
+    RAW_DATA.nodes.some((n) => n.x !== null && n.x !== undefined && n.y !== null && n.y !== undefined);
 
   nodes = [];
   const totalN = RAW_DATA.nodes.length;
@@ -457,12 +477,13 @@ window.resetToFull = async function () {
   for (let i = 0; i < totalN; i += chunkSize) {
     const slice = RAW_DATA.nodes.slice(i, i + chunkSize);
     const chunk = slice.map((n) => {
+      const nodeHasPos = n.x !== null && n.x !== undefined && n.y !== null && n.y !== undefined;
       const newNode = hasCachedPos
-        ? { ...n }
-        : { ...n, x: w / 2 + random(), y: h / 2 + random(), vx: 0, vy: 0 };
+        ? { ...n, _hasLayoutPos: nodeHasPos }
+        : { ...n, x: w / 2 + random(), y: h / 2 + random(), vx: 0, vy: 0, _hasLayoutPos: false };
       applyMetaToNode(newNode);
       applyTypeStyling(newNode);
-      if (hasTargets && targetSet.has(newNode.id)) {
+      if (hasTargets && targetSet.has(String(newNode.id))) {
         newNode.color =
           typeof CONFIG !== "undefined" && CONFIG.visuals
             ? CONFIG.visuals.colors.Green
@@ -532,10 +553,8 @@ window.runFilter = async function () {
   if (progressBar) progressBar.style.width = "100%";
   await sleep(50);
 
-  if (typeof window.updateIRPControlUI === "function") {
-    window.updateIRPControlUI(0);
-  }
-
+  // Preserve the user's current Z-Score slider value and compute the targeted subnetwork
+  // strictly using edges with z_score >= ZSCORE_STATE.threshold (when Z-Score is available).
   const fullAdjacency = window.__APP_CORE__.getFullAdjacency
     ? window.__APP_CORE__.getFullAdjacency()
     : window.__APP_CORE__.buildAdjacency(RAW_DATA.nodes, RAW_DATA.links);
@@ -561,6 +580,7 @@ window.runFilter = async function () {
     for (const nodeId of currentLayer) {
       const neighbors = fullAdjacency.get(nodeId) || [];
       for (const edgeObj of neighbors) {
+        if (!edgePassesZScore(RAW_DATA.links[edgeObj.idx])) continue;
         if (!connectNeighbors) {
           keptEdgeIndices.add(edgeObj.idx);
         }
@@ -577,6 +597,7 @@ window.runFilter = async function () {
     visitedNodes.forEach((nodeId) => {
       const neighbors = fullAdjacency.get(nodeId) || [];
       for (const edgeObj of neighbors) {
+        if (!edgePassesZScore(RAW_DATA.links[edgeObj.idx])) continue;
         if (visitedNodes.has(edgeObj.n)) {
           keptEdgeIndices.add(edgeObj.idx);
         }
@@ -584,27 +605,13 @@ window.runFilter = async function () {
     });
   }
 
-  if (keptEdgeIndices.size === 0) {
-    if (startNodes.size > 0) {
-      if (typeof VISIBILITY_STATE !== "undefined") {
-        VISIBILITY_STATE.Rogue = 2;
-      }
-      const rogueCheckbox = document.getElementById("vis-Rogue");
-      if (rogueCheckbox) rogueCheckbox.checked = true;
-    } else {
-      alert("No edges found.");
-      loader.style.display = "none";
-      return;
-    }
-  }
-
   if (prune && keptEdgeIndices.size > 0) {
     const localAdj = new Map();
     const edgeMap = new Map();
     for (const idx of keptEdgeIndices) {
       const l = RAW_DATA.links[idx];
-      const s = l.source?.id || l.source;
-      const t = l.target?.id || l.target;
+      const s = String(l.source?.id || l.source);
+      const t = String(l.target?.id || l.target);
       if (!localAdj.has(s)) localAdj.set(s, new Set());
       if (!localAdj.has(t)) localAdj.set(t, new Set());
       localAdj.get(s).add(t);
@@ -640,6 +647,20 @@ window.runFilter = async function () {
     prunedIndices.forEach((x) => keptEdgeIndices.add(x));
   }
 
+  if (keptEdgeIndices.size === 0) {
+    if (startNodes.size > 0) {
+      if (typeof VISIBILITY_STATE !== "undefined") {
+        VISIBILITY_STATE.Rogue = 2;
+      }
+      const rogueCheckbox = document.getElementById("vis-Rogue");
+      if (rogueCheckbox) rogueCheckbox.checked = true;
+    } else {
+      alert("No edges found.");
+      loader.style.display = "none";
+      return;
+    }
+  }
+
   const finalNodeIds = new Set();
   const subgraphLinks = [];
 
@@ -666,6 +687,9 @@ window.runFilter = async function () {
         y: h / 2 + random(),
         vx: 0,
         vy: 0,
+        isRogue: false,
+        dashed: false,
+        _hasLayoutPos: false,
       };
       applyMetaToNode(newNode);
       applyTypeStyling(newNode);
@@ -702,12 +726,14 @@ window.runFilter = async function () {
       if (originalNode) {
         const newNode = {
           ...originalNode,
-          x: w / 2 + (random() * 50 - 25),
-          y: h / 2 + (random() * 50 - 25),
+          x: null,
+          y: null,
           vx: 0,
           vy: 0,
           isRogue: true,
+          dashed: true,
           isTarget: true,
+          _hasLayoutPos: false,
         };
         applyMetaToNode(newNode);
         applyTypeStyling(newNode);

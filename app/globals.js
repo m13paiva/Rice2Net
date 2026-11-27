@@ -154,8 +154,17 @@ window.getExportNodeId = function (node) {
   else return rap || msu || String(node.id || "");
 };
 
-/** Integrated Rank Prediction (IRP) Filter Threshold State */
-let IRP_STATE = { threshold: 0.0 };
+/** Dynamic Z-Score Filter Threshold State (slider hidden when network has no z_score values) */
+const DEFAULT_ZSCORE_THRESHOLD = 1.28;
+let ZSCORE_STATE = {
+  enabled: false,
+  min: 0,
+  max: 1,
+  defaultThreshold: DEFAULT_ZSCORE_THRESHOLD,
+  threshold: DEFAULT_ZSCORE_THRESHOLD,
+};
+window.DEFAULT_ZSCORE_THRESHOLD = DEFAULT_ZSCORE_THRESHOLD;
+window.ZSCORE_STATE = ZSCORE_STATE;
 
 const PARAMS = new URLSearchParams(window.location.search);
 

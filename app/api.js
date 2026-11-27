@@ -157,14 +157,22 @@
     const regPairMap = new Map();
     const bindsPairMap = new Map();
 
-    const addDirection = (src, tgt) => {
+    const addDirection = (src, tgt, dirSources = null) => {
       const a = String(src);
       const b = String(tgt);
       const pairKey = a < b ? `${a}|${b}` : `${b}|${a}`;
       if (!regPairMap.has(pairKey)) regPairMap.set(pairKey, []);
       const list = regPairMap.get(pairKey);
-      if (!list.some((d) => d.src === a && d.tgt === b)) {
-        list.push({ src: a, tgt: b });
+      const existing = list.find((d) => d.src === a && d.tgt === b);
+      if (!existing) {
+        const entry = { src: a, tgt: b };
+        if (Array.isArray(dirSources) && dirSources.length > 0) {
+          entry.sources = dirSources;
+        }
+        list.push(entry);
+      } else if (Array.isArray(dirSources) && dirSources.length > 0) {
+        const merged = new Set([...(existing.sources || []), ...dirSources]);
+        existing.sources = Array.from(merged);
       }
     };
 
@@ -172,17 +180,17 @@
       raw.edges.forEach((e) => {
         if (Array.isArray(e.directions)) {
           e.directions.forEach((d) => {
-            if (d && d.src && d.tgt) addDirection(d.src, d.tgt);
+            if (d && d.src && d.tgt) addDirection(d.src, d.tgt, d.sources);
           });
         } else if (e.src && e.tgt) {
-          addDirection(e.src, e.tgt);
+          addDirection(e.src, e.tgt, e.sources);
         }
       });
     } else if (raw && raw.directions && typeof raw.directions === "object") {
       Object.values(raw.directions).forEach((dirs) => {
         if (Array.isArray(dirs)) {
           dirs.forEach((d) => {
-            if (d && d.src && d.tgt) addDirection(d.src, d.tgt);
+            if (d && d.src && d.tgt) addDirection(d.src, d.tgt, d.sources);
           });
         }
       });
@@ -208,16 +216,58 @@
   }
 
   /**
+   * Unpacks compact-v1 integer-indexed edge tuples [sIdx, tIdx, weight, z_score, signCode]
+   * in-place to minimize transient peak browser memory on multi-million-edge networks.
+   */
+  function unpackCompactNetwork(data) {
+    if (
+      !data ||
+      data.format !== "compact-v1" ||
+      !Array.isArray(data.nodes) ||
+      !Array.isArray(data.edges)
+    ) {
+      return data;
+    }
+
+    const nodeIds = new Array(data.nodes.length);
+    for (let i = 0; i < data.nodes.length; i++) {
+      nodeIds[i] = data.nodes[i].id;
+    }
+
+    const edges = data.edges;
+    for (let i = 0; i < edges.length; i++) {
+      const tuple = edges[i];
+      if (!Array.isArray(tuple)) continue;
+      const signCode = tuple[4];
+      edges[i] = {
+        source: nodeIds[tuple[0]],
+        target: nodeIds[tuple[1]],
+        weight: tuple[2],
+        z_score: tuple[3],
+        sign: signCode === 1 ? "+" : signCode === -1 ? "-" : null,
+        has_interacts: true,
+        has_regulates: false,
+      };
+    }
+
+    delete data.format;
+    return data;
+  }
+
+  /**
    * 1. Fetch initial network topology (nodes + edges)
    */
   async function initNetwork() {
     if (getMode() === "static") {
       if (!staticCache.network) {
-        staticCache.network = await fetchJson(`${getDemoBase()}/network.json`);
+        staticCache.network = unpackCompactNetwork(
+          await fetchJson(`${getDemoBase()}/network.json`)
+        );
       }
       return staticCache.network;
     }
-    return fetchJson(`${getApiBase()}/api/network/init`);
+    const raw = await fetchJson(`${getApiBase()}/api/network/init`);
+    return unpackCompactNetwork(raw);
   }
 
   /**
@@ -313,6 +363,26 @@
     throw err;
   }
 
+  const STATIC_MOTIF_SOURCE_ALIAS = {
+    PlantTFDB: "PlantTFDB",
+    "JASPAR Core": "JASPAR Core",
+    JASPAR_Core: "JASPAR Core",
+    "JASPAR Unvalidated": "JASPAR Unvalidated",
+    JASPAR_Unvalidated: "JASPAR Unvalidated",
+    "CIS-BP": "CIS-BP",
+    CIS_BP: "CIS-BP",
+  };
+
+  function normalizeStaticSourceSet(sources) {
+    if (!Array.isArray(sources)) return null;
+    const set = new Set();
+    sources.forEach((s) => {
+      const canon = STATIC_MOTIF_SOURCE_ALIAS[String(s || "").trim()];
+      if (canon) set.add(canon);
+    });
+    return set;
+  }
+
   /**
    * 5. Query regulatory directions for a batch of undirected gene pairs (optionally filtered by motif sources)
    */
@@ -323,7 +393,10 @@
 
     if (getMode() === "static") {
       const { regPairMap, bindsPairMap } = await loadStaticRegulation();
-      const sourceSet = Array.isArray(sources) ? new Set(sources) : null;
+      const sourceSet = normalizeStaticSourceSet(sources);
+      if (sourceSet && sourceSet.size === 0) {
+        return { edges: [] };
+      }
       const edges = [];
       pairs.forEach((p) => {
         if (!p || !p.s || !p.t) return;
@@ -333,6 +406,9 @@
         let directions = regPairMap.get(pairKey);
         if (directions && directions.length > 0 && sourceSet) {
           directions = directions.filter((d) => {
+            if (Array.isArray(d.sources) && d.sources.length > 0) {
+              return d.sources.some((src) => sourceSet.has(src));
+            }
             const binds = bindsPairMap.get(`${d.src}->${d.tgt}`) || [];
             return binds.some((m) => sourceSet.has(m.motif_source));
           });
@@ -341,7 +417,7 @@
           edges.push({
             original_s: a,
             original_t: b,
-            directions,
+            directions: directions.map((d) => ({ src: d.src, tgt: d.tgt })),
             has_regulates: true,
           });
         }
@@ -369,8 +445,8 @@
       const { bindsPairMap } = await loadStaticRegulation();
       const key = `${String(source)}->${String(target)}`;
       let binds = bindsPairMap.get(key) || [];
-      if (Array.isArray(sources)) {
-        const sourceSet = new Set(sources);
+      const sourceSet = normalizeStaticSourceSet(sources);
+      if (sourceSet) {
         binds = binds.filter((b) => sourceSet.has(b.motif_source));
       }
       return { binds };
@@ -395,7 +471,7 @@
 
     if (getMode() === "static") {
       const { bindsPairMap } = await loadStaticRegulation();
-      const sourceSet = Array.isArray(sources) ? new Set(sources) : null;
+      const sourceSet = normalizeStaticSourceSet(sources);
       const bindsByPair = {};
       pairs.forEach((p) => {
         const src = String(p.source || p.s || "");
@@ -453,8 +529,18 @@
    */
   async function runCommunityDiscovery(payload) {
     if (getMode() === "static") {
+      if (
+        typeof window !== "undefined" &&
+        window.RICE2NET_STATIC_ANALYZE &&
+        typeof window.RICE2NET_STATIC_ANALYZE.runCommunityDiscovery === "function"
+      ) {
+        return window.RICE2NET_STATIC_ANALYZE.runCommunityDiscovery(
+          getDemoBase(),
+          payload || {}
+        );
+      }
       throw new Error(
-        "Community Discovery requires the Rice2Net backend server (not available in static Web Demo mode)."
+        "Static Community Discovery engine is not loaded."
       );
     }
 
@@ -485,9 +571,17 @@
    */
   async function runOra(payload) {
     if (getMode() === "static") {
-      throw new Error(
-        "ORA re-analysis requires the Rice2Net backend server (not available in static Web Demo mode)."
-      );
+      if (
+        typeof window !== "undefined" &&
+        window.RICE2NET_STATIC_ANALYZE &&
+        typeof window.RICE2NET_STATIC_ANALYZE.runOra === "function"
+      ) {
+        return window.RICE2NET_STATIC_ANALYZE.runOra(
+          getDemoBase(),
+          payload || {}
+        );
+      }
+      throw new Error("Static ORA engine is not loaded.");
     }
 
     const res = await fetch(`${getApiBase()}/api/analyze/ora`, {
@@ -516,6 +610,16 @@
    */
   async function getTermGenes(payload) {
     if (getMode() === "static") {
+      if (
+        typeof window !== "undefined" &&
+        window.RICE2NET_STATIC_ANALYZE &&
+        typeof window.RICE2NET_STATIC_ANALYZE.getTermGenes === "function"
+      ) {
+        return window.RICE2NET_STATIC_ANALYZE.getTermGenes(
+          getDemoBase(),
+          payload || {}
+        );
+      }
       return { genes: [] };
     }
 

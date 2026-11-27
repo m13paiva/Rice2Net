@@ -110,7 +110,7 @@ window.isNodeInteractive = function (n) {
 
 /**
  * Rebuilds the spatial quadtree containing only currently visible/interactive nodes
- * so hidden or IRP-filtered nodes cannot be hovered, clicked, or block underlying edges.
+ * so hidden or Z-Score-filtered nodes cannot be hovered, clicked, or block underlying edges.
  */
 window.rebuildInteractiveQuadtree = function () {
   if (typeof d3 === "undefined") return;
@@ -129,10 +129,12 @@ window.rebuildInteractiveQuadtree = function () {
 };
 
 /**
- * Applies IRP threshold filtering and target gene isolation to update active graph nodes and links.
+ * Applies Z-Score threshold filtering (when enabled) and target gene isolation
+ * to update active graph nodes and links.
  */
 window.applyEdgeFilter = function () {
-  const threshold = IRP_STATE.threshold;
+  const zEnabled = typeof ZSCORE_STATE !== "undefined" && ZSCORE_STATE.enabled;
+  const threshold = zEnabled ? ZSCORE_STATE.threshold : -Infinity;
 
   // Clear stale hover state so filtered-out edges/nodes cannot stay highlighted or clicked
   if (typeof HOVERED_EDGE !== "undefined") HOVERED_EDGE = null;
@@ -161,8 +163,13 @@ window.applyEdgeFilter = function () {
   const nextLinks = [];
   for (let i = 0; i < sourceLinks.length; i++) {
     const l = sourceLinks[i];
-    const score = l.irp !== undefined && l.irp !== null ? l.irp : 0;
-    if (score < threshold) continue;
+    if (zEnabled) {
+      const zVal =
+        l.z_score !== undefined && l.z_score !== null && l.z_score !== ""
+          ? Number(l.z_score)
+          : null;
+      if (zVal === null || !Number.isFinite(zVal) || zVal < threshold) continue;
+    }
 
     const sId = String(l.source?.id || l.source);
     const tId = String(l.target?.id || l.target);
@@ -177,7 +184,7 @@ window.applyEdgeFilter = function () {
       source: sNode,
       target: tNode,
       weight: l.weight,
-      irp: l.irp !== undefined && l.irp !== null ? l.irp : null,
+      z_score: l.z_score !== undefined && l.z_score !== null ? l.z_score : null,
       sign: l.sign || null,
       has_interacts: l.has_interacts !== undefined ? l.has_interacts : true,
       has_regulates: l.has_regulates || false,
@@ -199,6 +206,7 @@ window.applyEdgeFilter = function () {
   const isTargeted = targetSet.size > 0;
 
   const nextNodes = [];
+  let hasUnplacedRogue = false;
   for (let i = 0; i < sourceNodes.length; i++) {
     const n = sourceNodes[i];
     const idStr = String(n.id);
@@ -207,26 +215,29 @@ window.applyEdgeFilter = function () {
     if (deg > 0) {
       n.isRogue = false;
       n.dashed = false;
-      nextNodes.push(n);
-    } else if (!isTargeted) {
+    } else {
       n.isRogue = true;
       n.dashed = true;
-      nextNodes.push(n);
-    } else if (targetSet.has(idStr)) {
-      n.isRogue = true;
-      n.dashed = true;
-      nextNodes.push(n);
+      if (n.x == null || n.y == null) hasUnplacedRogue = true;
     }
+    nextNodes.push(n);
   }
   nodes = nextNodes;
 
+  if (hasUnplacedRogue && typeof window.positionUnplacedRogueNodes === "function") {
+    window.positionUnplacedRogueNodes();
+  }
+
   if (typeof updateVisualProps === "function") updateVisualProps();
 
-  window.IS_FILTERED_NETWORK = (nodes.length < RAW_DATA.nodes.length) || isTargeted || threshold > 0;
+  const isZThresholdChanged =
+    zEnabled && Math.abs(threshold - ZSCORE_STATE.defaultThreshold) > 1e-6;
+  window.IS_FILTERED_NETWORK =
+    RAW_DATA.workingLinks !== null || isTargeted || isZThresholdChanged;
   window.updateClusterAvailability();
 
   if (
-    threshold === 0 &&
+    !zEnabled &&
     sourceLinks === RAW_DATA.links &&
     links.length === RAW_DATA.links.length &&
     RAW_DATA.fullAdjacency &&
@@ -660,7 +671,10 @@ async function main() {
     RAW_DATA.nodes = RAW_DATA.embeddedNodes;
     RAW_DATA.links = RAW_DATA.embeddedLinks;
 
-    nodes = RAW_DATA.nodes.map((n) => ({ ...n }));
+    nodes = RAW_DATA.nodes.map((n) => ({
+      ...n,
+      _hasLayoutPos: n.x !== null && n.x !== undefined && n.y !== null && n.y !== undefined,
+    }));
     RAW_DATA.workingNodes = nodes;
     RAW_DATA.workingLinks = null;
 
@@ -694,30 +708,46 @@ async function main() {
 
     if (typeof cacheMetaSnapshot === "function") cacheMetaSnapshot();
 
-    const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
-    links = RAW_DATA.links
-      .map((e) => ({
-        source: nodeMap.get(String(e.source?.id || e.source)),
-        target: nodeMap.get(String(e.target?.id || e.target)),
-        weight:
-          e.weight !== undefined && e.weight !== null
-            ? e.weight
-            : e.value !== undefined && e.value !== null
-            ? e.value
-            : 1,
-        irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
-        sign: e.sign || null,
-        has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
-        has_regulates: e.has_regulates || false,
-        directions: e.directions || null,
-        binds: e.binds || null,
-        reg_matched: !!e.reg_matched,
-      }))
-      .filter((l) => l.source && l.target);
+    // Configure dynamic Z-Score filter bounds (default 1.28 when present, hidden when absent).
+    // When Z-Score filtering is enabled, applyEdgeFilter() materializes only edges >= defaultThreshold
+    // directly from RAW_DATA.links, avoiding redundant multi-million-edge allocations on startup.
+    RAW_DATA.fullAdjacency = null;
+    RAW_DATA._fullAdjacencyLinksRef = null;
 
-    RAW_DATA.adjacency = buildAdjacency(nodes, links);
-    RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
-    RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+    const hasZScore =
+      typeof window.configureZScoreBounds === "function"
+        ? window.configureZScoreBounds(RAW_DATA.links)
+        : false;
+
+    if (hasZScore && typeof window.applyEdgeFilter === "function") {
+      links = [];
+      window.applyEdgeFilter();
+    } else {
+      const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
+      links = RAW_DATA.links
+        .map((e) => ({
+          source: nodeMap.get(String(e.source?.id || e.source)),
+          target: nodeMap.get(String(e.target?.id || e.target)),
+          weight:
+            e.weight !== undefined && e.weight !== null
+              ? e.weight
+              : e.value !== undefined && e.value !== null
+              ? e.value
+              : 1,
+          z_score: e.z_score !== undefined && e.z_score !== null ? e.z_score : null,
+          sign: e.sign || null,
+          has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
+          has_regulates: e.has_regulates || false,
+          directions: e.directions || null,
+          binds: e.binds || null,
+          reg_matched: !!e.reg_matched,
+        }))
+        .filter((l) => l.source && l.target);
+
+      RAW_DATA.adjacency = buildAdjacency(nodes, links);
+      RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
+      RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+    }
 
     if (nodes.length > 0 && nodes.some((n) => n.x !== undefined && n.x !== null)) {
       if (loaderText) loaderText.innerText = "RENDERING...";
@@ -766,7 +796,6 @@ window.revertToEmbeddedNetworkCore = async function () {
   if (targetInput) targetInput.value = "";
   const targetFile = document.getElementById("target-file");
   if (targetFile) targetFile.value = "";
-  if (typeof window.updateIRPControlUI === "function") window.updateIRPControlUI(0);
   if (typeof window.closeDetails === "function") window.closeDetails();
 
   const tooltipEl = document.getElementById("tooltip");
@@ -843,7 +872,10 @@ window.revertToEmbeddedNetworkCore = async function () {
       RAW_DATA.links = RAW_DATA.embeddedLinks;
       RAW_DATA.dbNodes = RAW_DATA.embeddedNodes;
 
-      nodes = RAW_DATA.nodes.map((n) => ({ ...n }));
+      nodes = RAW_DATA.nodes.map((n) => ({
+      ...n,
+      _hasLayoutPos: n.x !== null && n.x !== undefined && n.y !== null && n.y !== undefined,
+    }));
       RAW_DATA.workingNodes = nodes;
       RAW_DATA.workingLinks = null;
 
@@ -876,30 +908,43 @@ window.revertToEmbeddedNetworkCore = async function () {
 
       if (typeof cacheMetaSnapshot === "function") cacheMetaSnapshot();
 
-      const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
-      links = RAW_DATA.links
-        .map((e) => ({
-          source: nodeMap.get(String(e.source?.id || e.source)),
-          target: nodeMap.get(String(e.target?.id || e.target)),
-          weight:
-            e.weight !== undefined && e.weight !== null
-              ? e.weight
-              : e.value !== undefined && e.value !== null
-              ? e.value
-              : 1,
-          irp: e.irp !== undefined && e.irp !== null ? e.irp : null,
-          sign: e.sign || null,
-          has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
-          has_regulates: e.has_regulates || false,
-          directions: e.directions || null,
-          binds: e.binds || null,
-          reg_matched: !!e.reg_matched,
-        }))
-        .filter((l) => l.source && l.target);
+      RAW_DATA.fullAdjacency = null;
+      RAW_DATA._fullAdjacencyLinksRef = null;
 
-      RAW_DATA.adjacency = buildAdjacency(nodes, links);
-      RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
-      RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+      const hasZScore =
+        typeof window.configureZScoreBounds === "function"
+          ? window.configureZScoreBounds(RAW_DATA.links)
+          : false;
+
+      if (hasZScore && typeof window.applyEdgeFilter === "function") {
+        links = [];
+        window.applyEdgeFilter();
+      } else {
+        const nodeMap = new Map(nodes.map((n) => [String(n.id), n]));
+        links = RAW_DATA.links
+          .map((e) => ({
+            source: nodeMap.get(String(e.source?.id || e.source)),
+            target: nodeMap.get(String(e.target?.id || e.target)),
+            weight:
+              e.weight !== undefined && e.weight !== null
+                ? e.weight
+                : e.value !== undefined && e.value !== null
+                ? e.value
+                : 1,
+            z_score: e.z_score !== undefined && e.z_score !== null ? e.z_score : null,
+            sign: e.sign || null,
+            has_interacts: e.has_interacts !== undefined ? e.has_interacts : true,
+            has_regulates: e.has_regulates || false,
+            directions: e.directions || null,
+            binds: e.binds || null,
+            reg_matched: !!e.reg_matched,
+          }))
+          .filter((l) => l.source && l.target);
+
+        RAW_DATA.adjacency = buildAdjacency(nodes, links);
+        RAW_DATA.fullAdjacency = RAW_DATA.adjacency;
+        RAW_DATA._fullAdjacencyLinksRef = RAW_DATA.links;
+      }
 
       if (typeof updateClusterAvailability === "function") updateClusterAvailability();
 

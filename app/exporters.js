@@ -240,9 +240,9 @@ window.exportTSV = function () {
         const cleanName = String(c.name || "").replace(/[\t\r\n]+/g, " ");
         rows.push(`#RICE2NET_CLUSTER\t${c.id}\t${cleanName}\t${c.color || ""}`);
       });
-      rows.push("Source\tTarget\tWeight\tIRP_score\tDirectional\tSign\tSource_Cluster\tTarget_Cluster");
+      rows.push("Source\tTarget\tWeight\tZ_Score\tDirectional\tSign\tSource_Cluster\tTarget_Cluster");
     } else {
-      rows.push("Source\tTarget\tWeight\tIRP_score\tDirectional\tSign");
+      rows.push("Source\tTarget\tWeight\tZ_Score\tDirectional\tSign");
     }
 
     let exportedCount = 0;
@@ -266,7 +266,7 @@ window.exportTSV = function () {
       if ((tNode.isRogue && !VISIBILITY_STATE.Rogue && !tNode.isTarget) || tNode.color === CONFIG.visuals.colors.Transparent) return;
 
       const weight = l.weight !== undefined && l.weight !== null ? l.weight : (l.value || l.w || "1");
-      const irpVal = l.irp !== undefined && l.irp !== null ? l.irp : "";
+      const zScoreVal = l.z_score !== undefined && l.z_score !== null ? l.z_score : "";
       const signVal = l.sign || "";
 
       const isDirectional = isRegActive && !!l.has_regulates && Array.isArray(l.directions) && l.directions.length > 0;
@@ -283,7 +283,7 @@ window.exportTSV = function () {
 
           if (!sOut || !tOut) return;
 
-          const baseRow = `${sOut}\t${tOut}\t${weight}\t${irpVal}\ttrue\t${signVal}`;
+          const baseRow = `${sOut}\t${tOut}\t${weight}\t${zScoreVal}\ttrue\t${signVal}`;
           rows.push(
             hasClusters
               ? `${baseRow}\t${getClusterCell(dirSrcNode)}\t${getClusterCell(dirTgtNode)}`
@@ -297,7 +297,7 @@ window.exportTSV = function () {
 
         if (!sOut || !tOut) return;
 
-        const baseRow = `${sOut}\t${tOut}\t${weight}\t${irpVal}\tfalse\t${signVal}`;
+        const baseRow = `${sOut}\t${tOut}\t${weight}\t${zScoreVal}\tfalse\t${signVal}`;
         rows.push(
           hasClusters
             ? `${baseRow}\t${getClusterCell(sNode)}\t${getClusterCell(tNode)}`
@@ -370,7 +370,7 @@ window.exportJSON = async function () {
           source: window.getExportNodeId ? window.getExportNodeId(sNode) : sId,
           target: window.getExportNodeId ? window.getExportNodeId(tNode) : tId,
           weight: l.weight !== undefined && l.weight !== null ? l.weight : (l.value || 1),
-          irp: l.irp !== undefined && l.irp !== null ? l.irp : null,
+          z_score: l.z_score !== undefined && l.z_score !== null ? l.z_score : null,
           sign: l.sign || null,
           has_interacts: l.has_interacts !== false,
           has_regulates: isRegActive ? !!l.has_regulates : false,

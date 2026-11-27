@@ -33,8 +33,13 @@ All notable changes to Rice2Net are listed here.
   - Updated loader and status messages across the app for clarity and consistency (e.g., `"Fetching network topology"`, `"Fetching promoter-binding motif occurrences"`, `"Generating high-resolution image"`, `"Loading gene annotations"`).
 - **Re-enabled Global Clusters by Default:**
   - Re-enabled `CLUSTERS_ENABLED` with stable ID-based `CLUSTER_STATE` tracking across rendering, details, legends, and PNG/tabular exports, and ensured reverting from imported networks always resets in-memory clusters and regulation overlays cleanly before reloading DB clusters.
+- **Replaced Redundant IRP Score with Dynamic Z-Score Filter:**
+  - Removed the redundant `irp` property (identical to `weight`) from all `824,461` `INTERACTS_WITH` edges in Neo4j (`tools/migrate_remove_irp_neo4j.js`) and stripped redundant `irp` fields from `demo_data/network.json` and `GET /api/network/init` (which now streams `weight`, `z_score`, and `sign`).
+  - Replaced the fixed `0–1` IRP threshold slider with a dynamic **Z-Score** threshold slider (`default = 1.28`) whose min/max range adapts to the loaded network's `z_score` values and automatically hides from the UI when the active network has no `z_score` values.
+  - Updated Target Explorer subnetwork filtering (`runFilter`) and node expansion (`expandNode`) to respect the current Z-Score slider value rather than resetting it, so adjusting the threshold and clicking *Filter Subnetwork* recalculates the targeted network accordingly.
+  - Removed redundant `IRP Score` rows/columns from edge details, node connections, and exports (`Weight` is kept, and `Z-Score` / `Z_Score` / `z_score` is displayed and exported/imported whenever present).
 - **Updated Documentation:**
-  - Updated `README.md` and `homepage.html` with the new `Analyze` workflows, global cluster summary, and current Neo4j database statistics.
+  - Updated `README.md` and `homepage.html` with explicit attribution for the Infomap (`@mapequation/infomap`) and ORA (`@stdlib/stats` Hypergeometric PMF + BH-FDR, GO `go-basic.obo` DAG propagation) methodologies, the new `Analyze` workflows, the Z-Score filter, the 8 global clusters, and current Neo4j database statistics.
 
 ### Fixed
 - **Sidebar Textarea Overflow (`style.css`):**
