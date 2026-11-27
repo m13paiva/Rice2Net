@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://m13paiva.github.io/Rice2Net/">
-    <img src="https://img.shields.io/badge/Try_Live_Web_Demo-Rice2Net_(GitHub_Pages)-2a5298?style=for-the-badge&logo=githubpages&logoColor=white" alt="Try Live Web Demo">
+    <img src="https://img.shields.io/badge/Try_Live_Web_Demo-555555?style=for-the-badge" alt="Try Live Web Demo" height="46">
   </a>
 </p>
 
